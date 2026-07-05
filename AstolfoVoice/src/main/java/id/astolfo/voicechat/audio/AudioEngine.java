@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * AudioEngine — orkestrasi decode + resample + streaming playback.
  * OpusManager (shared, ThreadLocal) + AudioDecoder + Resampler + StreamingAudioPlayer.
+ * activePlaybacks di-decrement otomatis saat playback selesai (via watcher).
  */
 public final class AudioEngine {
 
@@ -67,8 +68,10 @@ public final class AudioEngine {
             activePlaybacks.incrementAndGet();
             PlaybackHandleImpl handle = streamer.play(targets, pcm48, options, resolved.getName(), null);
             handles.add(handle);
+            watchCompletion(handle);
             return handle;
         } catch (Exception e) {
+            activePlaybacks.decrementAndGet();
             Bukkit.getLogger().warning("[Astolfo] Audio decode failed for " + file + ": " + e.getMessage());
             return null;
         }
@@ -83,10 +86,17 @@ public final class AudioEngine {
         return pcm48;
     }
 
-    /**
-     * Putar antrian file berurutan ke target (playlist). Mengembalikan handle
-     * representatif; berhenti membatalkan seluruh antrian tersisa.
-     */
+    /** Watcher: decrement counter + cleanup handle saat playback selesai. */
+    private void watchCompletion(PlaybackHandleImpl handle) {
+        Thread.ofVirtual().name("astolfo-watch", 0).start(() -> {
+            while (handle.isRunning()) {
+                try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            }
+            activePlaybacks.decrementAndGet();
+            handles.remove(handle);
+        });
+    }
+
     public PlaybackHandle playQueue(List<Player> targets, List<String> files, PlaybackOptions options, boolean loop) {
         if (targets.isEmpty() || files.isEmpty()) return null;
         PlaybackHandleImpl handle = new PlaybackHandleImpl("queue:" + files.size());
@@ -128,22 +138,12 @@ public final class AudioEngine {
     }
 
     public void stopAll() {
-        for (PlaybackHandleImpl h : handles) {
-            h.stop();
-        }
+        for (PlaybackHandleImpl h : handles) h.stop();
         handles.clear();
         activePlaybacks.set(0);
     }
 
-    public int activeCount() {
-        return activePlaybacks.get();
-    }
-
-    public File getAudioDir() {
-        return audioDir;
-    }
-
-    public OpusManager getOpus() {
-        return opus;
-    }
+    public int activeCount() { return activePlaybacks.get(); }
+    public File getAudioDir() { return audioDir; }
+    public OpusManager getOpus() { return opus; }
 }

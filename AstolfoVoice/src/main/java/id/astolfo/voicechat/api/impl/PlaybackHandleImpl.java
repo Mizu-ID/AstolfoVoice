@@ -5,8 +5,9 @@ import id.astolfo.voicechat.api.PlaybackHandle;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * PlaybackHandle stub. Streaming engine (Fase 2) akan menjalankan audio nyata;
- * sekarang menandai state agar API tetap konsisten.
+ * PlaybackHandle implementation. Tracks the running state of a streaming
+ * playback started by StreamingAudioPlayer. stop() flips the flag so the
+ * streaming virtual thread exits its frame loop on the next iteration.
  */
 public final class PlaybackHandleImpl implements PlaybackHandle {
 
@@ -32,6 +33,7 @@ public final class PlaybackHandleImpl implements PlaybackHandle {
         return file;
     }
 
+    /** Called by the streaming thread when playback reaches the final frame. */
     public void markStopped() {
         running.set(false);
     }

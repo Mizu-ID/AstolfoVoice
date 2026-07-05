@@ -15,6 +15,7 @@ Thumbs.db
 
 # Logs / temp
 build_log.txt
+dep_log.txt
 *.log
 
 # Misc local

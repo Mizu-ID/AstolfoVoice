@@ -40,6 +40,14 @@ public final class NetworkMessage {
         return timestamp;
     }
 
+    public long getTTL() {
+        return packet != null ? packet.getTTL() : 10_000L;
+    }
+
+    public boolean isExpired(long now) {
+        return packet != null && (now - timestamp) > packet.getTTL();
+    }
+
     public SocketAddress getAddress() {
         return address;
     }
@@ -68,16 +76,13 @@ public final class NetworkMessage {
 
     private static byte getPacketType(Packet packet) {
         byte type = (byte) packet.getTypeId();
-        if (REGISTRY.containsKey(type)) {
-            return type;
-        }
-        return -1;
+        return REGISTRY.containsKey(type) ? type : -1;
     }
 
     // ---- Read ----
 
     /**
-     * Parse paket UDP yang diterima server-side. Return null bila invalid/drop.
+     * Parse paket UDP yang diterima server-side. Return null bila invalid/expired/drop.
      * Hook ping eksternal via pingHandler (boleh null).
      */
     public static NetworkMessage readPacketServer(RawUdpPacket raw, SecretProvider secrets,
@@ -94,10 +99,10 @@ public final class NetworkMessage {
                 }
                 return null;
             }
-            byte[] encrypted = b.readByteArray();
+            // Batasi envelope payload agar paket besar ditolak (kerentanan mitigasi).
+            byte[] encrypted = b.readByteArray(Utils.MAX_VOICE_CHAT_PACKET_SIZE);
             return readFromBytes(raw.getSocketAddress(), secrets.getSecret(playerID), encrypted, raw.getTimestamp());
         } catch (RuntimeException e) {
-            // IndexOutOfBounds / decode error → silent drop
             return null;
         }
     }

@@ -6,61 +6,52 @@ plugins {
     id 'com.gradleup.shadow' version '9.3.2'
 }
 
-// Nama archive (Gradle 9: pakai base extension, bukan archivesBaseName legacy).
 base {
     archivesName = 'AstolfoVoice'
 }
 
 repositories {
-    // Repo khusus PaperMC sudah didefinisikan di root subprojects.
-    // Repo shedaniel me-host artifact henkelmax (opus4j, lame4j, rnnoise4j) — opsional.
     maven { url = 'https://maven.shedaniel.me/' }
-    // PlaceholderAPI di-host di repo HelpChat.
     maven { url = 'https://repo.helpch.at/releases' }
     maven { url = 'https://jitpack.io' }
-    // Libs lokal (Concentus jar vendored dari GitHub release lostromb/concentus).
     flatDir {
         dirs 'libs'
     }
 }
 
 dependencies {
-    // Paper API 1.21+ (transitif: netty, adventure, guava, snakeyaml).
     compileOnly 'io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT'
 
-    // ---- Opus pure-Java (vendored jar: libs/concentus-1.0.jar) ----
-    // Concentus oleh lostromb (port Opus, MIT-like). Shade ke fat-jar.
+    // Opus pure-Java (vendored jar).
     implementation name: 'concentus-1.0'
 
-    // ---- Audio decoders (Maven Central) ----
-    implementation 'javazoom:jlayer:1.0.1'                              // mp3
-    implementation 'org.gagravarr:vorbis-java-core:0.8'                // ogg/vorbis
-    // wav: javax.sound.sampled (JDK) — tidak butuh dependency.
+    // Audio decoders (Maven Central).
+    implementation 'javazoom:jlayer:1.0.1'                 // mp3
+    implementation 'org.jcraft:jorbis:0.0.17'              // ogg/vorbis PCM decoder (pure Java)
+    implementation 'org.gagravarr:vorbis-java-core:0.8'   // ogg demux helper (opsional)
+    // wav: javax.sound.sampled (JDK).
 
-    // PlaceholderAPI — compile only (soft depend).
     compileOnly 'me.clip:placeholderapi:2.11.6'
 }
 
 processResources {
     filteringCharset = 'UTF-8'
-    // Expand placeholder ${project.version} di plugin.yml.
     inputs.property 'version', project.version
     filesMatching('plugin.yml') {
         expand(project.properties)
     }
 }
 
-// Fat-jar tunggal: shade dependency runtime, namai bersih.
 shadowJar {
-    archiveClassifier = ''            // output: AstolfoVoice-<ver>.jar
+    archiveClassifier = ''
     mergeServiceFiles()
-    // Relokasi agar tidak bentrok dengan plugin lain di server.
     relocate 'org.concentus', 'id.astolfo.libs.concentus'
     relocate 'javazoom.jl', 'id.astolfo.libs.jlayer'
+    relocate 'com.jcraft.jogg', 'id.astolfo.libs.jogg'
+    relocate 'com.jcraft.jorbis', 'id.astolfo.libs.jorbis'
     relocate 'org.gagravarr', 'id.astolfo.libs.vorbis'
 }
 
-// Default task: bangun fat-jar.
 build {
     dependsOn shadowJar
 }

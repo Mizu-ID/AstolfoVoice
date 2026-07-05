@@ -9,4 +9,9 @@ public interface Packet {
     void toBytes(FriendlyByteBuf buf);
 
     int getTypeId();
+
+    /** TTL paket (ms). Paket kedaluwarsa di-drop server-side. */
+    default long getTTL() {
+        return 10_000L;
+    }
 }

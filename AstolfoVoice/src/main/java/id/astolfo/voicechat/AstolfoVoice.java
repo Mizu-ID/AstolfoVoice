@@ -26,11 +26,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.StringReader;
 import java.util.logging.Level;
 
 /**
  * AstolfoVoice — main plugin (Paper 1.21+). Lifecycle sesuai IMPLEMENTATION_PLAN §C.
+ *
+ * Urutan enable yang BENAR (perbaikan wiring):
+ *   config → audio dir → opus → compat → net → voice server (handler=null sementara)
+ *   → server events (handler dipasang ke voice server) → audio engine → API → command → PAPI
+ *   → sync task: start UDP + init events.
+ * Tanpa langkah ini, handshake + audio + command NPE saat runtime.
  */
 public final class AstolfoVoice extends JavaPlugin implements Listener {
 
@@ -47,6 +52,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     private AudioEngine audioEngine;
     private PlaylistManager playlists;
     private OpusManager opusManager;
+    private PaperCompatibility compat;
 
     @Override
     public void onEnable() {
@@ -55,8 +61,8 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         // 1. Config + default resources
         File configFile = new File(getDataFolder(), "config.yml");
         InputStream defaultConfig = getResource("config.yml");
-        AstolfoConfig templateCfg = new AstolfoConfig(YamlConfiguration.loadConfiguration(new StringReader("")));
         if (defaultConfig != null) {
+            AstolfoConfig templateCfg = new AstolfoConfig(YamlConfiguration.loadConfiguration(new java.io.StringReader("")));
             templateCfg.saveDefaultIfMissing(configFile, defaultConfig);
         }
         this.config = AstolfoConfig.load(configFile);
@@ -88,23 +94,25 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         }
         this.opusManager = new OpusManager(codec, config.opusBitrate());
 
-        // 4. Compatibility
-        PaperCompatibility compat = new PaperCompatibility(this, player -> voiceEvents != null && voiceEvents.isCompatible(player));
+        // 4. Compatibility (channelChecker membutuhkan voiceEvents → pakai lambda lazy)
+        this.compat = new PaperCompatibility(this,
+                player -> voiceEvents != null && voiceEvents.isCompatible(player));
 
         // 5. NetManager
         PacketRateLimiter rateLimiter = new PacketRateLimiter(config.tcpRateLimit());
         this.netManager = new NetManager(this, compat, rateLimiter);
         netManager.onEnable();
 
-        // 6. Voice server (UDP)
+        // 6. Voice server (UDP) — handler sementara null, dipasang setelah server events dibuat.
         this.voiceServer = new VoiceServer(getLogger(), config.port(), config.bindAddress(), null,
                 config.virtualThreads(), config.dspQueueCapacity());
 
-        // 7. Server events (handshake) + proximity pakai opusManager
+        // 7. Server events (handshake) + proximity pakai opusManager + pasang handler UDP.
         this.voiceEvents = new ServerVoiceEvents(getLogger(), config, voiceServer, netManager, opusManager);
+        voiceEvents.setPlugin(this);
         voiceServer.setHandler(voiceEvents);
 
-        // 8. Audio engine + playlists
+        // 8. Audio engine + playlists (sekarang voiceEvents sudah ada — bukan null).
         if (config.audioEnabled()) {
             this.audioEngine = new AudioEngine(config, voiceEvents, audioDir, opusManager);
         }
@@ -140,7 +148,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
 
         getLogger().info("AstolfoVoice enabled (compat=" + COMPATIBILITY_VERSION + ", paper=" + PaperCompatibility.isPaper() + ")");
 
-        // Schedule UDP start di sync task pertama
+        // 13. Schedule UDP start di sync task pertama (Bukkit Messenger butuh main thread).
         Bukkit.getScheduler().runTask(this, () -> {
             try {
                 voiceServer.start();

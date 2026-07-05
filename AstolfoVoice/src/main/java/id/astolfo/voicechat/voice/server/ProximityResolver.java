@@ -14,13 +14,19 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ProximityResolver — routing mic packet + sound physics advanced + Tier 2 DSP.
+ * ProximityResolver — routing mic packet + sound physics advanced + Tier 2 DSP +
+ * private channel routing.
  *
- * Tier 1 (default): SoundPath → modulasi distance + whisper flag (murah, client attenuate).
- * Tier 2 (opt-in per world): decode opus → DspProcessor (lowpass muffle + reverb + gate)
- *   → re-encode → kirim. Mahal (CPU + latency) tapi "bergema/mendam beneran".
+ * Urutan routing per mic packet:
+ *  1) Group sound (bila sender di grup) → anggota grup.
+ *  2) Private channel (bila sender di channel privat) → anggota lain channel,
+ *     jarak tak terbatas bila audibleNearby=false (sekitar tidak dengar).
+ *     Bila audibleNearby=true, anggota juga + orang dalam 'range' (lanjut proximity).
+ *  3) Proximity broadcast ke world, terapkan sound physics.
  *
- * Dynamic range RMS (bisik→teriak) lewat decode opus + LoudnessMeter.
+ * Tier 1 (default): SoundPath → modulasi distance + whisper flag.
+ * Tier 2 (opt-in per world): decode→DspProcessor→re-encode ("bergema/mendam beneran").
+ * Dynamic range RMS (bisik→teriak) lewat decode opus.
  */
 public final class ProximityResolver {
 
@@ -28,7 +34,6 @@ public final class ProximityResolver {
     private final GroupManager groupManager;
     private final SoundPhysicsEngine physics;
     private final OpusManager opus;
-    // Tier2 DSP state per pasangan (sender,listener) — biar reverb/lowpass kontinu.
     private final ConcurrentHashMap<String, DspProcessor> dspStates = new ConcurrentHashMap<>();
 
     public ProximityResolver(AstolfoConfig config, GroupManager groupManager, OpusManager opus) {
@@ -54,7 +59,7 @@ public final class ProximityResolver {
         }
         DynamicRange dr = computeDynamicRange(loudnessDb, mic.isWhispering(), hasDecoded, sender);
 
-        // Group sound
+        // 1) Group sound
         UUID groupId = groupManager.getGroupOf(senderUuid);
         if (groupId != null) {
             List<UUID> members = groupManager.getMembers(groupId);
@@ -68,16 +73,44 @@ public final class ProximityResolver {
             return;
         }
 
+        // 2) Private channel
+        var pcOptions = PrivateChannelRegistry.optionsOf(senderUuid);
+        List<UUID> pcMembers = PrivateChannelRegistry.membersOf(senderUuid);
+        if (pcMembers != null && pcOptions != null) {
+            // Kirim ke anggota lain dengan jarak tak terbatas (distance sangat besar → client tidak attenuate proximity).
+            for (UUID member : pcMembers) {
+                if (member.equals(senderUuid)) continue;
+                Player listener = org.bukkit.Bukkit.getPlayer(member);
+                if (listener == null) continue;
+                // distance besar = terdengar penuh antar anggota (tak terbatas).
+                float distance = Float.MAX_VALUE;
+                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, distance, "astolfo_private");
+            }
+            // Bila audibleNearby=false → sekitar TIDAK dengar: return (skip proximity).
+            if (!pcOptions.isAudibleNearby()) {
+                return;
+            }
+            // Bila true → lanjut proximity, tapi batasi ke pcOptions.range (orang dalam range dengar).
+            // (Proximity loop di bawah akan menyaring via broadcast range.)
+        }
+
         Location senderLoc = sender.getEyeLocation();
         if (senderLoc.getWorld() == null) return;
 
         boolean tier2 = isTier2(senderLoc.getWorld().getName());
+        // Broadcast range: untuk private channel audibleNearby, batasi ke range channel.
         double broadcastRange = config.broadcastRange() < 0 ? dr.range + 1 : config.broadcastRange();
         broadcastRange = Math.max(broadcastRange, config.shoutRange() + 8);
+        if (pcOptions != null && pcOptions.isAudibleNearby() && pcOptions.getRange() > 0) {
+            broadcastRange = Math.min(broadcastRange, pcOptions.getRange());
+        }
 
+        // 3) Proximity broadcast ke world
         for (Player listener : senderLoc.getWorld().getPlayers()) {
             if (listener.getUniqueId().equals(senderUuid)) continue;
             if (!server.isCompatible(listener)) continue;
+            // skip anggota channel yang sudah dapat paket privat di atas (dapat dua kali = echo).
+            if (pcMembers != null && pcMembers.contains(listener.getUniqueId())) continue;
             Location listenerLoc = listener.getEyeLocation();
             double dist = senderLoc.distance(listenerLoc);
             if (dist > broadcastRange) continue;
@@ -97,7 +130,6 @@ public final class ProximityResolver {
                     effectiveWhisper = effectiveWhisper || path.lowpassHz < 1200f;
                 }
 
-                // Tier 2: bake DSP bila ada efek signifikan.
                 if (tier2 && hasDecoded && decodedPcm != null
                         && (path.lowpassHz < AudioUtils.SAMPLE_RATE / 2f || path.reverb > 0f || path.muffled)) {
                     short[] baked = decodedPcm.clone();

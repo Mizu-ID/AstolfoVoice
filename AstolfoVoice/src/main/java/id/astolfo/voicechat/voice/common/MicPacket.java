@@ -39,6 +39,11 @@ public class MicPacket implements Packet {
     }
 
     @Override
+    public long getTTL() {
+        return 500L;
+    }
+
+    @Override
     public void toBytes(FriendlyByteBuf buf) {
         buf.writeByteArray(opusData);
         buf.writeLong(sequenceNumber);

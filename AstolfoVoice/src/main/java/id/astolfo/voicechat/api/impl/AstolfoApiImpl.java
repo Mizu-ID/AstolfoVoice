@@ -12,6 +12,7 @@ import id.astolfo.voicechat.voice.common.PlayerState;
 import id.astolfo.voicechat.voice.server.AstolfoOverride;
 import id.astolfo.voicechat.voice.server.GroupManager;
 import id.astolfo.voicechat.voice.server.PlayerStateManager;
+import id.astolfo.voicechat.voice.server.PrivateChannelRegistry;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -104,7 +105,6 @@ public final class AstolfoApiImpl implements AstolfoApi {
 
     @Override
     public PlaybackHandle playAtLocation(String world, double x, double y, double z, String file, PlaybackOptions options) {
-        // LocationSoundPacket playback penuh = lanjutan; sementara broadcast ke world (static).
         return broadcastWorld(world, file, options);
     }
 
@@ -127,11 +127,12 @@ public final class AstolfoApiImpl implements AstolfoApi {
         if (audioEngine != null) audioEngine.stop(handle);
     }
 
-    // ---- Private channel ----
+    // ---- Private channel (routing audio nyata via PrivateChannelRegistry) ----
     @Override
     public PrivateChannel createPrivateChannel(List<UUID> members, PrivateChannelOptions options) {
         PrivateChannelImpl ch = new PrivateChannelImpl(members, options);
         privateChannels.put(ch.getId(), ch);
+        PrivateChannelRegistry.register(ch);
         return ch;
     }
 
@@ -139,6 +140,7 @@ public final class AstolfoApiImpl implements AstolfoApi {
     public void removePrivateChannel(PrivateChannel channel) {
         if (channel instanceof PrivateChannelImpl impl) {
             privateChannels.remove(impl.getId());
+            PrivateChannelRegistry.unregister(impl);
         }
     }
 
