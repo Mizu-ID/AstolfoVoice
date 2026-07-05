@@ -1,5 +1,15 @@
-# AstolfoVoice — Implementation Plan (matang, fokus Bukkit/Paper)
+<table width="100%"><tr>
+<td width="64" valign="middle" align="center">
+  <img src="../../astolfo.png" alt="Astolfo" width="54" style="border-radius:11px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 12px rgba(255,92,168,.25);" />
+</td>
+<td valign="middle">
 
+# AstolfoVoice - Implementation Plan <sub style="color:#d8b4e2">fokus Bukkit/Paper</sub>
+
+</td>
+</tr></table>
+
+&nbsp;
 > Fork/reimplementasi modern dari Simple Voice Chat (https://github.com/henkelmax/simple-voice-chat),
 > **khusus platform Bukkit/Spigot/Paper**. Protokol UDP + handshake **identik & kompatibel** dengan
 > client Simple Voice Chat biasa — pemain tidak perlu ganti mod.
@@ -412,3 +422,11 @@ RNNoise/Speex load + low-pass/reverb bake (opt-in per-world).
 
 ## P. Catatan legal
 SVC = GPL-3.0. Fork AstolfoVoice **wajib** GPL-3.0 + preserve copyright notice henkelmax. Protokol direimplementasi bersih (tidak copy-paste sumber untuk logika bisnis baru); wire format byte-exact karena itu kontrak interop, bukan expression unik. Sebut "kompatibel dengan Simple Voice Chat", bukan afiliasi/endorsed.
+
+
+&nbsp;
+
+<p align="right">
+  <img src="../../astolfo2.png" alt="heart" width="120" style="border-radius:14px; box-shadow:0 0 0 3px #ffb6c1, 0 6px 18px rgba(255,92,168,.25);" />
+</p>
+<p align="center"><sub style="color:#d8b4e2">architecture with love - stay soft</sub></p>

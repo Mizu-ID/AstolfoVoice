@@ -1,5 +1,15 @@
-# AstolfoVoice — Protocol Reference
+<table width="100%"><tr>
+<td width="64" valign="middle" align="center">
+  <img src="../../astolfo2.png" alt="Astolfo" width="54" style="border-radius:11px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 12px rgba(255,92,168,.25);" />
+</td>
+<td valign="middle">
 
+# AstolfoVoice - Protocol Reference <sub style="color:#d8b4e2">byte-exact SVC</sub>
+
+</td>
+</tr></table>
+
+&nbsp;
 Wire format verbatim dari Simple Voice Chat (https://github.com/henkelmax/simple-voice-chat),
 direkonstruksi dari sumber `common/src/main/java/de/maxhenkel/voicechat/voice/common/*`
 dan `bukkit/src/main/java/de/maxhenkel/voicechat/net/*`.
@@ -131,3 +141,11 @@ boolean hasGroup | (jika true) UUID group
 AstolfoVoice: default target 20; adapter per versi via `VersionedPacketRegistry` (Fase 6).
 Untuk client lama dengan format berbeda, serializer UDP dipilih per-koneksi berdasarkan `compat`.
 Wire format di atas valid untuk compat 20.
+
+
+&nbsp;
+
+<p align="right">
+  <img src="../../astolfo.png" alt="heart" width="120" style="border-radius:14px; box-shadow:0 0 0 3px #ffb6c1, 0 6px 18px rgba(255,92,168,.25);" />
+</p>
+<p align="center"><sub style="color:#d8b4e2">compat with love - stay soft</sub></p>
