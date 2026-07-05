@@ -1,11 +1,14 @@
 package id.astolfo.voicechat;
 
+import id.astolfo.voicechat.api.PlaybackHandle;
+import id.astolfo.voicechat.api.PlaybackOptions;
+import id.astolfo.voicechat.audio.AudioEngine;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.voice.common.PlayerState;
-import id.astolfo.voicechat.voice.server.GroupManager;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -17,15 +20,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * AstolfoCommand — perintah /astolfo (alias av, astolfovoice).
- * Subcommand: play (player|world|all|location|group), stop, list,
- *             voicerange, broadcast, status, reset, reload.
- *
- * Playback (mp3/ogg/wav) diaktifkan penuh di Fase 2 setelah audio engine
- * (decoder + resampler + streaming) terimplementasi. Saat ini play mengembalikan
- * info file tersedia + status engine. Command non-playback fungsional sekarang.
+ * Playback mp3/ogg/wav via AudioEngine (Fase 2). Non-playback fungsional penuh.
  */
 public final class AstolfoCommand implements CommandExecutor, TabCompleter {
 
@@ -35,12 +34,15 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
     private final AstolfoVoice plugin;
     private final ServerVoiceEvents server;
     private final AstolfoConfig config;
+    private final AudioEngine audioEngine;
+    private final CopyOnWriteArrayList<PlaybackHandle> activeHandles = new CopyOnWriteArrayList<>();
     private final java.util.concurrent.ConcurrentHashMap<UUID, Double> voiceRangeOverrides = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public AstolfoCommand(AstolfoVoice plugin, ServerVoiceEvents server, AstolfoConfig config) {
+    public AstolfoCommand(AstolfoVoice plugin, ServerVoiceEvents server, AstolfoConfig config, AudioEngine audioEngine) {
         this.plugin = plugin;
         this.server = server;
         this.config = config;
+        this.audioEngine = audioEngine;
     }
 
     @Override
@@ -49,13 +51,12 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             sendUsage(sender);
             return true;
         }
-        String sub = args[0].toLowerCase();
-        switch (sub) {
+        switch (args[0].toLowerCase()) {
             case "play" -> handlePlay(sender, args);
-            case "stop" -> sender.sendMessage(prefix() + "Stop: gunakan /astolfo stop [player|world|all|id] (Fase 2 playback engine).");
+            case "stop" -> handleStop(sender, args);
             case "list" -> handleList(sender);
             case "voicerange" -> handleVoiceRange(sender, args);
-            case "broadcast" -> handleBroadcast(sender, args);
+            case "broadcast" -> handlePlay(sender, args);
             case "status" -> handleStatus(sender, args);
             case "reset" -> handleReset(sender, args);
             case "reload" -> handleReload(sender);
@@ -69,56 +70,103 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(prefix() + ChatColor.RED + "Kamu tidak punya izin.");
             return;
         }
+        if (audioEngine == null) {
+            sender.sendMessage(prefix() + ChatColor.RED + "Audio engine nonaktif (audio.enabled=false).");
+            return;
+        }
         if (args.length < 2) {
             sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play <player|world|all|location|group> ...");
             return;
         }
         String target = args[1].toLowerCase();
-        File audioDir = new File(plugin.getDataFolder(), config.audioFolder());
-        String file = switch (target) {
-            case "player" -> args.length > 3 ? args[3] : null;
-            case "all" -> args.length > 2 ? args[2] : null;
-            case "world" -> args.length > 3 ? args[3] : null;
-            case "group" -> args.length > 3 ? args[3] : null;
-            case "location" -> args.length > 6 ? args[6] : null;
-            default -> null;
-        };
-        if (file == null) {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "File audio tidak dispesifikkan. Contoh: /astolfo play player agus magis1.mp3");
-            return;
-        }
-        File resolved = resolveAudioFile(audioDir, file);
-        if (resolved == null || !resolved.exists()) {
-            sender.sendMessage(prefix() + ChatColor.RED + "File audio tidak ditemukan: " + file
-                    + " (cari di " + audioDir.getPath() + ", format mp3/ogg/wav)");
-            return;
-        }
-        // TODO Fase 2: decode + resample + streaming audio engine (Concentrus Opus + decoder).
-        sender.sendMessage(prefix() + ChatColor.GREEN + "Play " + target + " '" + resolved.getName()
-                + "' dijadwalkan. Audio engine streaming (Fase 2) akan memutar saat aktif.");
-    }
+        List<Player> targets = new ArrayList<>();
+        String file = null;
+        double volume = config.audioDefaultVolume();
+        double distance = config.audioDefaultDistance();
 
-    private File resolveAudioFile(File dir, String name) {
-        if (name == null) return null;
-        // coba langsung
-        File direct = new File(dir, name);
-        if (direct.exists()) return direct;
-        // cari dengan ekstensi umum
-        for (String ext : new String[]{"", ".mp3", ".ogg", ".wav"}) {
-            File f = new File(dir, name + ext);
-            if (f.exists()) return f;
-        }
-        // case-insensitive
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.getName().equalsIgnoreCase(name) || f.getName().equalsIgnoreCase(name + ".mp3")
-                        || f.getName().equalsIgnoreCase(name + ".ogg") || f.getName().equalsIgnoreCase(name + ".wav")) {
-                    return f;
+        switch (target) {
+            case "player" -> {
+                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play player <player> <file> [volume]"); return; }
+                Player p = Bukkit.getPlayerExact(args[2]);
+                if (p == null) { sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan: " + args[2]); return; }
+                targets.add(p);
+                file = args[3];
+                if (args.length > 4) volume = parseDouble(args[4], volume);
+            }
+            case "all" -> {
+                if (args.length < 3) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play all <file> [volume]"); return; }
+                targets.addAll(Bukkit.getOnlinePlayers());
+                file = args[2];
+                if (args.length > 3) volume = parseDouble(args[3], volume);
+            }
+            case "world" -> {
+                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play world <world> <file> [volume]"); return; }
+                World w = Bukkit.getWorld(args[2]);
+                if (w == null) { sender.sendMessage(prefix() + ChatColor.RED + "World tidak ditemukan: " + args[2]); return; }
+                targets.addAll(w.getPlayers());
+                file = args[3];
+                if (args.length > 4) volume = parseDouble(args[4], volume);
+            }
+            case "group" -> {
+                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play group <group> <file>"); return; }
+                var g = server.getGroupManager().getGroupByName(args[2]);
+                if (g == null) { sender.sendMessage(prefix() + ChatColor.RED + "Grup tidak ditemukan: " + args[2]); return; }
+                for (UUID m : server.getGroupManager().getMembers(g.id)) {
+                    Player mp = Bukkit.getPlayer(m);
+                    if (mp != null) targets.add(mp);
                 }
+                file = args[3];
+            }
+            case "location" -> {
+                if (args.length < 8) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfo play location <world> <x> <y> <z> <file> [distance] [volume]"); return; }
+                World w = Bukkit.getWorld(args[2]);
+                if (w == null) { sender.sendMessage(prefix() + ChatColor.RED + "World tidak ditemukan: " + args[2]); return; }
+                targets.addAll(w.getPlayers()); // static per player; locational full = Fase 2 lanjut
+                file = args[6];
+                if (args.length > 7) distance = parseDouble(args[7], distance);
+                if (args.length > 8) volume = parseDouble(args[8], volume);
+            }
+            default -> {
+                sender.sendMessage(prefix() + ChatColor.YELLOW + "Target tidak dikenal: " + target);
+                return;
             }
         }
-        return null;
+        if (file == null) { sender.sendMessage(prefix() + ChatColor.RED + "File tidak dispesifikkan."); return; }
+        if (targets.isEmpty()) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Tidak ada target player online."); return; }
+
+        File resolved = audioEngine.resolveFile(file);
+        if (resolved == null) {
+            sender.sendMessage(prefix() + ChatColor.RED + "File audio tidak ditemukan: " + file
+                    + " (cari di plugins/AstolfoVoice/audio, format mp3/ogg/wav)");
+            return;
+        }
+        PlaybackOptions opts = new PlaybackOptions().setVolume(volume).setDistance(distance);
+        PlaybackHandle handle = audioEngine.playToTargets(targets, resolved.getName(), opts);
+        if (handle == null) {
+            sender.sendMessage(prefix() + ChatColor.RED + "Playback gagal (decode error atau kuota penuh). Cek log.");
+            return;
+        }
+        activeHandles.add(handle);
+        sender.sendMessage(prefix() + ChatColor.GREEN + "Memutar '" + resolved.getName() + "' ke "
+                + targets.size() + " target (" + target + ").");
+    }
+
+    private void handleStop(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("astolfo.stop")) {
+            sender.sendMessage(prefix() + ChatColor.RED + "Kamu tidak punya izin.");
+            return;
+        }
+        if (audioEngine == null) return;
+        if (args.length < 2 || args[1].equalsIgnoreCase("all")) {
+            int n = activeHandles.size();
+            audioEngine.stopAll();
+            activeHandles.clear();
+            sender.sendMessage(prefix() + ChatColor.GREEN + "Stop " + n + " playback.");
+        } else {
+            sender.sendMessage(prefix() + ChatColor.YELLOW + "Stop per-target/id menyusul; pakai /astolfo stop all.");
+            audioEngine.stopAll();
+            activeHandles.clear();
+        }
     }
 
     private void handleList(CommandSender sender) {
@@ -156,22 +204,12 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             try {
                 double range = Double.parseDouble(args[2]);
                 range = Math.min(range, config.maxPlayerRangeOverride());
-                range = Math.min(range, config.shoutRange() * 2); // batas atas aman
                 voiceRangeOverrides.put(target.getUniqueId(), range);
                 sender.sendMessage(prefix() + ChatColor.GREEN + target.getName() + " voice range di-set " + range);
             } catch (NumberFormatException e) {
                 sender.sendMessage(prefix() + ChatColor.RED + "Range tidak valid: " + args[2]);
             }
         }
-    }
-
-    private void handleBroadcast(CommandSender sender, String[] args) {
-        if (!sender.hasPermission("astolfo.broadcast")) {
-            sender.sendMessage(prefix() + ChatColor.RED + "Kamu tidak punya izin.");
-            return;
-        }
-        // alias play; delegasi ke handlePlay
-        handlePlay(sender, args);
     }
 
     private void handleStatus(CommandSender sender, String[] args) {
@@ -184,8 +222,9 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             sendPlayerStatus(sender, target);
         } else {
             int connected = server.getPlayerStateManager().allStates().size();
-            sender.sendMessage(prefix() + ChatColor.AQUA + "Status server: " + connected + " player tracked, "
-                    + server.getGroupManager().allGroups().size() + " grup");
+            int active = audioEngine != null ? audioEngine.activeCount() : 0;
+            sender.sendMessage(prefix() + ChatColor.AQUA + "Status: " + connected + " player tracked, "
+                    + server.getGroupManager().allGroups().size() + " grup, " + active + " playback aktif");
         }
     }
 
@@ -235,12 +274,11 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(ChatColor.GRAY + " /astolfo play player <player> <file> [volume]");
         sender.sendMessage(ChatColor.GRAY + " /astolfo play world <world> <file> [volume]");
         sender.sendMessage(ChatColor.GRAY + " /astolfo play all <file> [volume]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfo play location <world> <x> <y> <z> <file> [distance]");
+        sender.sendMessage(ChatColor.GRAY + " /astolfo play location <world> <x> <y> <z> <file> [distance] [volume]");
         sender.sendMessage(ChatColor.GRAY + " /astolfo play group <group> <file>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfo stop [player|world|all|id]");
+        sender.sendMessage(ChatColor.GRAY + " /astolfo stop [all]");
         sender.sendMessage(ChatColor.GRAY + " /astolfo list");
         sender.sendMessage(ChatColor.GRAY + " /astolfo voicerange <player> [range]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfo broadcast <player|world|all> <file>");
         sender.sendMessage(ChatColor.GRAY + " /astolfo status [player]");
         sender.sendMessage(ChatColor.GRAY + " /astolfo reset <player>");
         sender.sendMessage(ChatColor.GRAY + " /astolfo reload");
@@ -250,7 +288,14 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
         return ChatColor.LIGHT_PURPLE + "[Astolfo] " + ChatColor.WHITE;
     }
 
-    // ---- Tab complete ----
+    private double parseDouble(String s, double def) {
+        try {
+            return Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
@@ -269,9 +314,5 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             }
         }
         return out;
-    }
-
-    public Double getVoiceRangeOverride(UUID uuid) {
-        return voiceRangeOverrides.get(uuid);
     }
 }

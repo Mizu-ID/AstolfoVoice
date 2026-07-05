@@ -63,7 +63,6 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
     private final ConcurrentHashMap<UUID, Integer> clientCompatibilities = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, ClientConnection> unCheckedConnections = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, ClientConnection> connections = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, UUID> connectionAddressIndex = new ConcurrentHashMap<>(); // uuid→(mapped) not used
 
     private final AtomicLong seq = new AtomicLong(0);
     private volatile boolean running = false;
@@ -83,17 +82,16 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
     // ---- Lifecycle ----
 
     public void init() {
-        // Pasang handler plugin-channel
         RequestSecretPacket.setHandler(this);
         UpdateStatePacket.setHandler(this);
         CreateGroupPacket.setHandler(this);
         JoinGroupPacket.setHandler(this);
         LeaveGroupPacket.setHandler(this);
 
-        // Mulai UDP processor & keepalive loop
         running = true;
         voiceServer.startProcessor();
-        Bukkit.getScheduler().runTaskTimerAsynchronously(Bukkit.getPluginManager().getPlugin("AstolfoVoice"),
+        org.bukkit.plugin.Plugin plugin = Bukkit.getPluginManager().getPlugin("AstolfoVoice");
+        Bukkit.getScheduler().runTaskTimerAsynchronously(plugin,
                 this::keepAliveLoop, 20L, Math.max(1L, config.keepAlive() / 50L));
     }
 
@@ -106,7 +104,6 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
     // ---- ChannelChecker ----
     @Override
     public boolean isCompatible(Player player) {
-        // Kompatibel bila client pernah request secret (punya compatibility version).
         return clientCompatibilities.containsKey(player.getUniqueId());
     }
 
@@ -119,13 +116,10 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
         if (compatibilityVersion != config.defaultCompatibilityVersion()) {
             logger.info("Player " + player.getName() + " uses compatibility version " + compatibilityVersion
                     + " (server=" + config.defaultCompatibilityVersion() + ")");
-            // Adapter per versi (Fase 6); untuk sekarang tetap generate secret.
         }
 
-        // generateNewSecret: hanya buat jika belum ada (anti double-request).
         if (!voiceServer.hasSecret(uuid)) {
-            Secret secret = new Secret();
-            voiceServer.putSecret(uuid, secret);
+            voiceServer.putSecret(uuid, new Secret());
         }
         Secret secret = voiceServer.getSecret(uuid);
 
@@ -138,21 +132,13 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
 
         String host = config.voiceHost();
         if (host == null || host.isEmpty()) {
-            host = ""; // client pakai IP server sendiri
+            host = "";
         }
 
         SecretPacket packet = new SecretPacket(
-                secret,
-                config.port(),
-                uuid,
-                codec,
-                config.mtuSize(),
-                config.voiceRange(),
-                config.keepAlive(),
-                config.groupsEnabled(),
-                host,
-                config.allowRecording()
-        );
+                secret, config.port(), uuid, codec, config.mtuSize(),
+                config.voiceRange(), config.keepAlive(), config.groupsEnabled(),
+                host, config.allowRecording());
         netManager.sendToClient(player, packet);
     }
 
@@ -167,14 +153,13 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
     public void onCreateGroup(Player player, String name, String password, GroupType type) {
         if (!config.groupsEnabled()) return;
         GroupManager.Group group = groupManager.createGroup(name, password, false, false, type);
-        // Broadcast AddGroup ke semua player online (main thread).
-        Bukkit.getScheduler().runTask(Bukkit.getPluginManager().getPlugin("AstolfoVoice"), () -> {
+        org.bukkit.plugin.Plugin plugin = Bukkit.getPluginManager().getPlugin("AstolfoVoice");
+        Bukkit.getScheduler().runTask(plugin, () -> {
             AddGroupPacket add = new AddGroupPacket(group.toClientGroup());
             for (Player p : Bukkit.getOnlinePlayers()) {
                 netManager.sendToClient(p, add);
             }
         });
-        // Langsung join creator
         joinPlayer(player, group.id, password);
     }
 
@@ -207,7 +192,8 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
 
     public void removeGroup(UUID groupId) {
         groupManager.removeGroup(groupId);
-        Bukkit.getScheduler().runTask(Bukkit.getPluginManager().getPlugin("AstolfoVoice"), () -> {
+        org.bukkit.plugin.Plugin plugin = Bukkit.getPluginManager().getPlugin("AstolfoVoice");
+        Bukkit.getScheduler().runTask(plugin, () -> {
             RemoveGroupPacket rm = new RemoveGroupPacket(groupId);
             for (Player p : Bukkit.getOnlinePlayers()) {
                 netManager.sendToClient(p, rm);
@@ -244,7 +230,6 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
 
     private void onAuthenticate(AuthenticatePacket packet, SocketAddress address) {
         UUID uuid = packet.getPlayerUUID();
-        // cek secret cocok
         Secret expected = voiceServer.getSecret(uuid);
         if (expected == null || !expected.equals(packet.getSecret())) {
             logger.fine("Authenticate failed for " + uuid);
@@ -252,14 +237,12 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
         }
         ClientConnection conn = new ClientConnection(uuid, address);
         unCheckedConnections.put(uuid, conn);
-        // balas AuthenticateAckPacket via UDP
         voiceServer.send(conn, new NetworkMessage(new AuthenticateAckPacket()));
         playerStateManager.setDisconnected(uuid, false);
     }
 
     private void onConnectionCheck(NetworkMessage message) {
         UUID uuid = null;
-        // cari di unChecked berdasarkan address
         for (var e : unCheckedConnections.entrySet()) {
             if (e.getValue().getAddress().equals(message.getAddress())) {
                 uuid = e.getKey();
@@ -272,24 +255,18 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
         connections.put(uuid, conn);
         voiceServer.send(conn, new NetworkMessage(new ConnectionCheckAckPacket()));
         logger.info("Player " + uuid + " connected to voice chat");
-        // TODO Fase 1: broadcast PlayerStatePacket ke semua player (state connected)
     }
 
     private void onKeepAliveResponse(NetworkMessage message) {
-        UUID uuid = null;
         for (var e : connections.entrySet()) {
             if (e.getValue().getAddress().equals(message.getAddress())) {
-                uuid = e.getKey();
+                e.getValue().setLastKeepAliveResponse(System.currentTimeMillis());
                 break;
             }
         }
-        if (uuid == null) return;
-        ClientConnection conn = connections.get(uuid);
-        if (conn != null) conn.setLastKeepAliveResponse(System.currentTimeMillis());
     }
 
     private void onMicPacket(MicPacket mic, NetworkMessage message) {
-        // Temukan sender via address → uuid
         UUID senderUuid = null;
         for (var e : connections.entrySet()) {
             if (e.getValue().getAddress().equals(message.getAddress())) {
@@ -321,14 +298,12 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
             UUID uuid = e.getKey();
             ClientConnection conn = e.getValue();
             if (now - conn.getLastKeepAliveResponse() > timeout) {
-                // timeout → remove secret, reconnect (kirim SecretPacket baru)
                 connections.remove(uuid);
                 voiceServer.removeSecret(uuid);
                 playerStateManager.setDisconnected(uuid, true);
                 Player p = Bukkit.getPlayer(uuid);
                 if (p != null) {
-                    Secret secret = new Secret();
-                    voiceServer.putSecret(uuid, secret);
+                    voiceServer.putSecret(uuid, new Secret());
                     onRequestSecret(p, clientCompatibilities.getOrDefault(uuid, config.defaultCompatibilityVersion()));
                 }
                 continue;
@@ -346,6 +321,7 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
         playerStateManager.setDisconnected(uuid, true);
     }
 
+    // ---- Accessors ----
     public PlayerStateManager getPlayerStateManager() {
         return playerStateManager;
     }
@@ -360,5 +336,13 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
 
     public ProximityResolver getProximityResolver() {
         return proximityResolver;
+    }
+
+    public VoiceServer getVoiceServer() {
+        return voiceServer;
+    }
+
+    public ConcurrentHashMap<UUID, ClientConnection> getConnections() {
+        return connections;
     }
 }

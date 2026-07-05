@@ -2,6 +2,7 @@ package id.astolfo.voicechat;
 
 import id.astolfo.voicechat.api.AstolfoApi;
 import id.astolfo.voicechat.api.impl.AstolfoApiImpl;
+import id.astolfo.voicechat.audio.AudioEngine;
 import id.astolfo.voicechat.compat.PaperCompatibility;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.integration.AstolfoExpansion;
@@ -27,14 +28,10 @@ import java.util.logging.Level;
 
 /**
  * AstolfoVoice — main plugin (Paper 1.21+). Lifecycle sesuai IMPLEMENTATION_PLAN §C.
- *
- * onEnable: config → folder audio → compat → NetManager → listeners → service →
- *   command → soft-hook → schedule UDP start di sync task pertama.
- * onDisable: stop players → close UDP → unregister channels → service → executors.
  */
 public final class AstolfoVoice extends JavaPlugin implements Listener {
 
-    public static final String MODID = "voicechat"; // namespace channel tetap "voicechat"
+    public static final String MODID = "voicechat";
     public static final int COMPATIBILITY_VERSION = 20;
 
     public static AstolfoVoice INSTANCE;
@@ -44,6 +41,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     private VoiceServer voiceServer;
     private ServerVoiceEvents voiceEvents;
     private AstolfoApiImpl api;
+    private AudioEngine audioEngine;
 
     @Override
     public void onEnable() {
@@ -76,7 +74,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
             }
         }
 
-        // 3. Compatibility (Paper native; Spigot fallback memakai pola sama)
+        // 3. Compatibility
         PaperCompatibility compat = new PaperCompatibility(this, player -> voiceEvents != null && voiceEvents.isCompatible(player));
 
         // 4. NetManager
@@ -84,7 +82,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         this.netManager = new NetManager(this, compat, rateLimiter);
         netManager.onEnable();
 
-        // 5. Voice server (UDP) — handler di-set setelah voiceEvents dibuat
+        // 5. Voice server (UDP)
         this.voiceServer = new VoiceServer(getLogger(), config.port(), config.bindAddress(), null,
                 config.virtualThreads(), config.dspQueueCapacity());
 
@@ -92,15 +90,20 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         this.voiceEvents = new ServerVoiceEvents(getLogger(), config, voiceServer, netManager);
         voiceServer.setHandler(voiceEvents);
 
-        // 7. Register listeners
+        // 7. Audio engine (Fase 2)
+        if (config.audioEnabled()) {
+            this.audioEngine = new AudioEngine(config, voiceEvents, audioDir);
+        }
+
+        // 8. Register listeners
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        // 8. Register service (public API)
-        this.api = new AstolfoApiImpl(voiceEvents, audioDir, config.voiceRange());
+        // 9. Register service (public API)
+        this.api = new AstolfoApiImpl(voiceEvents, audioDir, config.voiceRange(), audioEngine);
         getServer().getServicesManager().register(AstolfoApi.class, api, this, ServicePriority.Normal);
 
-        // 9. Command
-        AstolfoCommand cmd = new AstolfoCommand(this, voiceEvents, config);
+        // 10. Command
+        AstolfoCommand cmd = new AstolfoCommand(this, voiceEvents, config, audioEngine);
         try {
             if (getCommand("astolfo") != null) {
                 getCommand("astolfo").setExecutor(cmd);
@@ -110,7 +113,7 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
             getLogger().log(Level.WARNING, "Failed to register command", e);
         }
 
-        // 10. Soft-hook PlaceholderAPI
+        // 11. Soft-hook PlaceholderAPI
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             try {
                 new AstolfoExpansion(this, api).register();
@@ -119,11 +122,10 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
                 getLogger().log(Level.WARNING, "Failed to register PlaceholderAPI expansion", t);
             }
         }
-        // Denizen/Skript bridge (Fase 5 lanjutan) — soft-hook menyusul.
 
         getLogger().info("AstolfoVoice enabled (compat=" + COMPATIBILITY_VERSION + ", paper=" + PaperCompatibility.isPaper() + ")");
 
-        // Schedule UDP start di sync task pertama (beberapa operasi butuh main thread siap)
+        // Schedule UDP start di sync task pertama
         Bukkit.getScheduler().runTask(this, () -> {
             try {
                 voiceServer.start();
@@ -138,7 +140,9 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        // Anti-deadlock urutan (plan §C)
+        if (audioEngine != null) {
+            audioEngine.stopAll();
+        }
         if (voiceEvents != null) {
             voiceEvents.close();
         }
@@ -155,7 +159,6 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     }
 
     // ---- Listeners ----
-
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
@@ -186,5 +189,9 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
 
     public AstolfoApiImpl getApi() {
         return api;
+    }
+
+    public AudioEngine getAudioEngine() {
+        return audioEngine;
     }
 }
