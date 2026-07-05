@@ -4,7 +4,8 @@
 # =====================================================================
 # Catatan: protokol UDP & handshake SAMA dengan Simple Voice Chat biasa,
 # jadi client SVC standar tetap bisa connect tanpa ganti mod.
-# Buka port UDP 'port' di bawah agar voice chat berfungsi.
+# Buka port UDP 'network.port' di firewall agar voice chat berfungsi.
+# Dokumen lengkap: docs/IMPLEMENTATION_PLAN.md & docs/PROTOCOL_REFERENCE.md
 # =====================================================================
 
 # ---------------------------------------------------------------------
@@ -27,7 +28,7 @@ network:
   keep_alive: 1000
   # Waktu tunggu cek mod terpasang (ms). Hanya jika force_voice_chat=true.
   login_timeout: 10000
-  # Balas ping eksternal (untuk server list dll).
+  # Balas ping eksternal (untuk server list / monitoring).
   allow_pings: true
 
 # ---------------------------------------------------------------------
@@ -54,8 +55,11 @@ voice_range:
   # Jarak saat bisik (block).
   whisper_range: 4
   # Jarak maksimum saat "teriak" (block). Bisa > voice_range.
-  # Butuh permission astolfo.shout untuk mencapai batas ini.
+  # Butuh permission 'shout_permission' untuk mencapai batas ini.
   shout_range: 96
+  # Permission untuk diizinkan range di atas voice_range (teriak).
+  # Default true = semua player. Set 'astolfo.shout' untuk batasi.
+  shout_permission: astolfo.shout
   # Aktifkan range dinamis berbasis kekuatan suara (RMS).
   # false = whisper/normal binary seperti SVC biasa.
   # true = jarak menyesuaikan: bisik kecil, teriak jauh.
@@ -69,6 +73,9 @@ voice_range:
   broadcast_range: -1
   # Batas atas override range per-player via API/command.
   max_player_range_override: 1000000
+  # Threshold (relative ke whisper_range) untuk set ikon bisik di client.
+  # distance < whisper_range * factor → whispering=true.
+  whisper_icon_threshold_factor: 1.5
 
 # ---------------------------------------------------------------------
 # Grup
@@ -93,35 +100,43 @@ force_voice_chat: false
 # ---------------------------------------------------------------------
 # Noise cancellation (server-side)
 # ---------------------------------------------------------------------
+# PENTING: NC server-side efektif HANYA jika sound_physics.tier = TIER_2,
+# karena butuh decode→proses→re-encode. Pada TIER_1, noise suppression
+# memakai bawaan client SVC (hemat CPU server).
 noise_cancellation:
-  # Aktifkan noise suppression pada PCM sebelum re-broadcast.
-  # Catatan: client SVC juga punya RNNoise sendiri; ini kerja ganda.
-  # Biarkan false jika client sudah pakai NC bawaan (hemat CPU server).
+  # Aktifkan noise suppression pada PCM sebelum re-broadcast (butuh TIER_2).
   enabled: false
-  # Engine. RNNOISE = neural net (berat, kualitas tinggi).
+  # Engine. RNNOISE = neural net native (kualitas tinggi). SPEEX = pure Java fallback.
   engine: RNNOISE
+  # Fallback ke SPEEX otomatis jika native RNNoise gagal load di OS/arch ini.
+  fallback_to_speex: true
   # Hanya proses speaker aktif (RMS di atas threshold) untuk hemat CPU.
   skip_silent_frames: true
   silent_threshold_db: -50.0
 
 # ---------------------------------------------------------------------
-# Sound physics (raytrace) - Tier 1 (default, murah)
+# Sound physics (raytrace)
 # ---------------------------------------------------------------------
 sound_physics:
   # Aktifkan simulasi fisika suara berbasis raytrace.
   enabled: true
   # Tier simulasi.
   # TIER_1 = occlusion gate + modulasi distance (murah, default).
-  # TIER_2 = TIER_1 + PCM DSP bake (low-pass muffle + reverb). Mahal, opt-in.
+  # TIER_2 = TIER_1 + PCM DSP bake (low-pass muffle + reverb + NC). Mahal, opt-in.
   tier: TIER_1
   # Lakukan raytrace occlusion (apakah tertutup?).
   raytrace: true
+  # Raytrace langsung async (true) atau via main-thread cache tick (false, aman default).
+  # true lebih cepat tapi uji stabilitas di Paper-mu dulu.
+  async_raytrace: false
   # Maksimum block solid yang ditembus sebelum suara tidak terdengar sama sekali.
   max_occlusion_blocks: 8
   # Penalti jarak per block solid yang ditembus (block). Mensimulasikan "mendam".
   occlusion_penalty_per_block: 6.0
-  # Radius probe untuk deteksi ruang tertutup (reverb).
+  # Radius probe untuk deteksi ruang tertutup (reverb/echo).
   reverb_probe_radius: 6
+  # Penalti distance saat listener berada di ruang tertutup (Tier 1 simulasi gema).
+  reverb_penalty: 4.0
   # Cache hasil raytrace per pasangan selama N tick (50ms tiap tick).
   # Naikkan untuk hemat CPU, turunkan untuk akurasi.
   cache_ticks: 2
@@ -131,9 +146,9 @@ sound_physics:
   reverb_gain: 0.25
   # Saat TIER_2: decay reverb (detik).
   reverb_decay_seconds: 1.2
-  # Listener per world yang mendapat TIER_2 (kosong = semua jika tier=TIER_2).
+  # World yang mendapat TIER_2 (kosong = semua world jika tier=TIER_2).
   tier2_worlds: []
-  # Bypass physics untuk grup (group chat tetap jernih).
+  # Bypass physics untuk grup (group chat tetap jernih seperti SVC).
   bypass_for_groups: true
 
 # ---------------------------------------------------------------------
@@ -152,25 +167,33 @@ audio:
   default_distance: 32
   # Maksimum playback concurrent di seluruh server.
   max_concurrent_playbacks: 64
-  # Kualitas resampler. LOW, MEDIUM, HIGH (HIGH = Lanczos/sinc).
+  # Kualitas resampler. LOW (linear), MEDIUM (lanczos-8), HIGH (lanczos/sinc-16).
   resample_quality: HIGH
   # Normalize peak playback agar tidak clipping.
   normalize: true
+  # Default PlaybackOptions untuk API: audibleNearby + range untuk private channel.
+  private_channel:
+    # Jika false: hanya anggota channel dengar (range tak terbatas antar anggota).
+    # Jika true: anggota + orang dalam 'range' block dengar.
+    default_audible_nearby: false
+    default_range: -1
 
 # ---------------------------------------------------------------------
 # Async & performa
 # ---------------------------------------------------------------------
 performance:
-  # Gunakan virtual thread (Java 25+) untuk packet processing & DSP.
+  # Gunakan virtual thread (Java 21+/25) untuk packet processing & DSP.
   virtual_threads: true
-  # Ukuran pool DSP (0 = virtual thread unlimited).
+  # Ukuran pool DSP (0 = virtual thread unlimited). Untuk platform thread, set >0.
   dsp_pool_size: 0
-  # Ukuran pool Opus decoder/encoder (per thread reuse).
+  # Ukuran pool Opus decoder/encoder (threadlocal reuse, batasi memori).
   opus_pool_size: 32
   # Drop paket kedaluwarsa (TTL) tanpa proses.
   drop_expired_packets: true
   # Log warning overload tiap berapa ms (0 = selalu).
   overload_log_cooldown_ms: 5000
+  # Bounded queue DSP (frame). -1 = unbounded. Naikkan = resistan burst, risiko latency.
+  dsp_queue_capacity: 1024
 
 # ---------------------------------------------------------------------
 # Integrasi
@@ -184,7 +207,7 @@ integration:
   # Bridge untuk Skript (via PublicApi + addon terpisah).
   skript:
     enabled: true
-  # Ekspose API publik ke plugin lain.
+  # Ekspose API publik ke plugin lain (ServicesManager).
   public_api: true
 
 # ---------------------------------------------------------------------
@@ -199,6 +222,17 @@ compatibility:
   reject_unknown_version: false
 
 # ---------------------------------------------------------------------
+# Native library (RNNoise, Opus native opsional)
+# ---------------------------------------------------------------------
+native:
+  # Ekstrak native lib dari jar ke folder temp saat load.
+  extract_from_jar: true
+  # Folder native (relatif folder plugin). Kosong = java.io.tmpdir.
+  folder: natives
+  # Coba load native; jika gagal, log warning + nonaktifkan fitur terkait (jangan crash).
+  graceful_failure: true
+
+# ---------------------------------------------------------------------
 # Debug
 # ---------------------------------------------------------------------
 debug:
@@ -207,3 +241,5 @@ debug:
   log_packets: false
   # Log timing DSP per frame.
   log_dsp_timing: false
+  # Log raytrace occlusion per pasangan (verbose).
+  log_raytrace: false
