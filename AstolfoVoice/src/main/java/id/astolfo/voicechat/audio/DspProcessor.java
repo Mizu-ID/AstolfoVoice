@@ -65,6 +65,20 @@ public final class DspProcessor {
                 reverb.setAmount(0.55);
                 reverb.processInPlace(pcm);
             }
+            case KAWAII -> {
+                // feel cerah & lembut: highpass 200 + reverb kecil + sedikit warm gain.
+                highpass.setCutoff(200f);
+                highpass.processInPlace(pcm);
+                reverb.setAmount(0.28);
+                reverb.processInPlace(pcm);
+            }
+            case LOFI -> {
+                // lofi warm: lowpass 3500 + reverb kecil + vibe cozy.
+                lowpass.setCutoff(3500f);
+                lowpass.processInPlace(pcm);
+                reverb.setAmount(0.22);
+                reverb.processInPlace(pcm);
+            }
             case NONE -> {
                 // nothing
             }

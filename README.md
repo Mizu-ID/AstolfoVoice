@@ -1,57 +1,72 @@
-# Astolfo
+<p align="left">
+  <img src="astolfo.png" alt="Astolfo" width="92" align="left" style="border-radius:14px; margin-right:14px; box-shadow:0 0 0 3px #ffb6c1, 0 6px 18px rgba(255,92,168,.35);" />
+</p>
 
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/Mizu-ID/Astolfo?include_prereleases)](https://github.com/Mizu-ID/Astolfo/releases)
-[![Paper](https://img.shields.io/badge/Paper-1.21%2B-00B2FF)](https://papermc.io)
-[![Java](https://img.shields.io/badge/Java-25-ED8B00)](https://openjdk.org)
+<h1 align="left">
+  <span style="color:#ff5ca8">Astolfo</span> <sub style="color:#d8b4e2; font-size:.55em">✿ proximity voice chat, but make it cute</sub>
+</h1>
 
-Monorepo untuk ekosistem plugin Minecraft **Astolfo**. Setiap plugin tinggal di folder
-sendiri dengan dokumen, build, dan source-nya masing-masing — root Gradle meng-include
-semua sebagai subproject dengan toolchain Java 25 yang shared.
+<br clear="left" />
 
-## Plugin
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-ff5ca8?style=flat-square&logo=gnu)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Mizu-ID/Astolfo?include_prereleases&style=flat-square&color=ff9ecf&label=✨%20release)](https://github.com/Mizu-ID/Astolfo/releases)
+[![Paper](https://img.shields.io/badge/Paper-1.21%2B-00B2FF?style=flat-square&logo=papermc)](https://papermc.io)
+[![Java](https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk)](https://openjdk.org)
+[![Discussions](https://img.shields.io/badge/discuss-pink%20%E2%99%A1-ffb6c1?style=flat-square)](https://github.com/Mizu-ID/Astolfo/discussions)
 
-| Folder | Versi | Status | Deskripsi |
-|--------|-------|--------|-----------|
-| [`AstolfoVoice`](AstolfoVoice) | 0.2.1 | **Playable** | Proximity voice chat kompatibel protokol Simple Voice Chat, sound physics raytrace, range dinamis, noise cancellation server-side, playback mp3/ogg/wav + sound-effect preset + location playback + clickable list. |
+> Monorepo untuk ekosistem plugin Minecraft **Astolfo** — proximity voice chat yang
+> kompatibel protokol Simple Voice Chat, tapi dibuat dengan rasa: sound physics raytrace,
+> voice range dinamis, playback mp3/ogg/wav + preset efek suara, dan UI pink cerah yang
+> ramah. Tiap plugin tinggal di folder sendiri; root Gradle meng-include semua sebagai
+> subproject dengan toolchain Java 25 yang shared.
 
-## Layout monorepo
+## ✿ Plugin
+
+| Folder | Versi | Status | Apa ini |
+|--------|-------|--------|---------|
+| [`AstolfoVoice`](AstolfoVoice) | 0.2.2 | **Playable** | Proximity voice chat kompatibel SVC · sound physics raytrace · range dinamis · noise suppression · playback mp3/ogg/wav + preset (PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) · location playback · list clickable |
+
+## ⋆ Layout
+
 ```
 Astolfo/
-├─ build.gradle              # root: shared toolchain Java 25, group/version
-├─ settings.gradle           # include tiap subproject
-├─ gradle.properties         # Gradle 9.6.1
-├─ LICENSE                   # GPL-3.0
-├─ CONTRIBUTING.md           # panduan kontribusi
-├─ .github/                  # issue & PR template
-├─ README.md                 # ini
+├─ build.gradle          root · shared toolchain Java 25
+├─ settings.gradle       include tiap subproject
+├─ gradle.properties     Gradle 9.6.1
+├─ astolfo.png           banner ✿
+├─ LICENSE               GPL-3.0
+├─ CONTRIBUTING.md       cara kontribusi
+├─ SECURITY.md           lapor kerentanan
+├─ .github/              issue & PR template
 └─ <PluginName>/
-   ├─ README.md              # dokumen plugin itu
-   ├─ docs/                  # implementation plan, protocol reference, design
+   ├─ README.md
+   ├─ docs/              implementation plan, protocol reference
    ├─ build.gradle
    └─ src/main/...
 ```
 
-## Build
+## ♡ Build
+
 ```bash
-# build semua plugin
-./gradlew build
-
-# build satu plugin jadi fat-jar (output: <Plugin>/build/libs/)
 ./gradlew :AstolfoVoice:shadowJar
+# → AstolfoVoice/build/libs/AstolfoVoice-0.2.2.jar
 ```
-Butuh **JDK 25** dan **Gradle 9.6.1** (wrapper sudah disertakan). Paper API &
-dependensi ditarik dari maven saat build pertama (online), setelah itu bisa `--offline`.
+Butuh **JDK 25** + **Gradle 9.6.1** (wrapper disertakan). Build pertama online, lalu
+bisa `--offline`.
 
-## Download
+## ✦ Download
 Release terbaru (jar siap pakai): https://github.com/Mizu-ID/Astolfo/releases
 
-## Kontribusi
-Lihat [CONTRIBUTING.md](CONTRIBUTING.md). Inti: jaga kompatibilitas wire format
-Simple Voice Chat (channel `voicechat:*`, UDP envelope, 10 tipe paket byte-exact),
-NMS-free, async virtual thread, dan zero TODO/stub.
+## ✿ Kontribusi
+Lihat [CONTRIBUTING.md](CONTRIBUTING.md). Inti: jaga kompatibilitas wire format SVC
+(channel `voicechat:*`, UDP envelope, 10 tipe paket byte-exact), NMS-free, async
+virtual thread, dan zero TODO/stub.
 
 ## Lisensi
-GPL-3.0 — lihat [LICENSE](LICENSE). `AstolfoVoice` adalah fork/reimplementasi protokol
-[Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat) (henkelmax), wajib
+GPL-3.0 — lihat [LICENSE](LICENSE). `AstolfoVoice` adalah reimplementasi protokol
+[Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat) (henkelmax); wajib
 tetap GPL-3.0. Protokol direimplementasi bersih, bukan copy-paste.
+
+<p align="center">
+  <sub style="color:#d8b4e2">made with ♡ · stay soft</sub>
+</p>

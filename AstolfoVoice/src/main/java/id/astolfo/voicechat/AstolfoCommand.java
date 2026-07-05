@@ -9,10 +9,11 @@ import id.astolfo.voicechat.voice.common.PlayerState;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
-import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -27,30 +28,31 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * AstolfoCommand - perintah /astolfovoice (alias /asv, /av, /astolfo).
  *
- * Urutan argumen sesuai spec user: FILE DULU, lalu target keyword, lalu nama.
- *   /astolfovoice play <file> player <p1> <p2> ... [volume] [pitch=P] [preset=PHONE]
- *   /astolfovoice play <file> world <world> [volume] [pitch=P] [preset=PHONE]
- *   /astolfovoice play <file> all [volume] [pitch=P] [preset=PHONE]
- *   /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=PHONE]
- *   /astolfovoice play <file> group <group>
- *   /astolfovoice playlist ...
+ * v0.2.2: visual femboyish pink (AstolfoStyle), tab completion context-aware
+ * (file audio, playlist, world, preset, player), sound feedback ke sender,
+ * dekorasi hand-crafted.
  *
- * v0.2.1:
- *  - location: playback LOCATIONAL beneran (LocationSoundPacket, attenuasi per-listener).
- *  - flag pitch=P (rate shift) & preset=PHONE|RADIO|MEGA|CAVE di akhir argumen.
- *  - list: audio ditampilkan sebagai clickable text (klik -> /av play <file> all).
- *  - playlist list: idem clickable (klik -> /av playlist play <name> all).
+ * Urutan: FILE DULU, lalu target, lalu nama + flag.
  */
 public final class AstolfoCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUB = Arrays.asList(
             "play", "stop", "list", "voicerange", "status", "reset", "reload", "playlist");
     private static final List<String> PRESETS = Arrays.asList(
-            "NONE", "PHONE", "RADIO", "MEGA", "CAVE");
+            "NONE", "PHONE", "RADIO", "MEGA", "CAVE", "KAWAII", "LOFI");
+    private static final TextColor CLICK = TextColor.color(0xFF, 0x8F, 0xB6);
+
+    /** Holder mutable untuk parse flag (pitch/preset/volume) tanpa lambda-capture issue. */
+    private static final class Flags {
+        double volume;
+        double pitch = 1.0;
+        String preset;
+    }
 
     private final AstolfoVoice plugin;
     private final ServerVoiceEvents server;
@@ -88,109 +90,94 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
-    // ============ PLAY (file-first) ============
+    /** Parse satu argumen flag ke holder. Return true bila argumen adalah flag/number (bukan player name). */
+    private static boolean parseFlag(String a, Flags f) {
+        String low = a.toLowerCase();
+        if (low.startsWith("pitch=")) { f.pitch = parseDouble(a.substring(6), f.pitch); return true; }
+        if (low.startsWith("preset=")) { f.preset = a.substring(7); return true; }
+        if (isNumber(a)) { f.volume = parseDouble(a, f.volume); return true; }
+        return false;
+    }
+
+    // ============ PLAY ============
     private void handlePlay(CommandSender sender, String[] args) {
         if (!sender.hasPermission("astolfo.play")) { noPerm(sender); return; }
-        if (audioEngine == null) { sender.sendMessage(prefix() + ChatColor.RED + "Audio engine nonaktif."); return; }
+        if (audioEngine == null) { sender.sendMessage(AstolfoStyle.error("Audio engine nonaktif.")); return; }
         if (args.length < 3) {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice play <file> <player|world|all|location|group> ...");
+            sender.sendMessage(AstolfoStyle.info("Penggunaan: /av play <file> <player|world|all|location|group> ..."));
             return;
         }
         String file = args[1];
         String target = args[2].toLowerCase();
         List<Player> targets = new ArrayList<>();
-        double volume = config.audioDefaultVolume();
+        Flags flags = new Flags();
+        flags.volume = config.audioDefaultVolume();
         double distance = config.audioDefaultDistance();
-        double pitch = 1.0;
-        String preset = null;
-        // Lokasi (untuk location)
         String locWorld = null;
         double lx = 0, ly = 0, lz = 0;
         boolean isLocation = false;
 
         switch (target) {
             case "player" -> {
-                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice play <file> player <player1> <player2> ... [volume] [pitch=P] [preset=X]"); return; }
+                if (args.length < 4) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av play <file> player <p1> <p2> ... [volume] [pitch=P] [preset=X]")); return; }
                 for (int i = 3; i < args.length; i++) {
-                    String a = args[i];
-                    if (a.toLowerCase().startsWith("pitch=")) { pitch = parseDouble(a.substring(6), pitch); continue; }
-                    if (a.toLowerCase().startsWith("preset=")) { preset = a.substring(7); continue; }
-                    if (isNumber(a)) { volume = parseDouble(a, volume); continue; }
-                    Player p = Bukkit.getPlayerExact(a);
-                    if (p == null) sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan: " + a);
+                    if (parseFlag(args[i], flags)) continue;
+                    Player p = Bukkit.getPlayerExact(args[i]);
+                    if (p == null) sender.sendMessage(AstolfoStyle.error("Player tidak ditemukan: " + args[i]));
                     else targets.add(p);
                 }
             }
             case "all" -> {
                 targets.addAll(Bukkit.getOnlinePlayers());
-                for (int i = 3; i < args.length; i++) {
-                    String a = args[i];
-                    if (a.toLowerCase().startsWith("pitch=")) { pitch = parseDouble(a.substring(6), pitch); continue; }
-                    if (a.toLowerCase().startsWith("preset=")) { preset = a.substring(7); continue; }
-                    if (isNumber(a)) volume = parseDouble(a, volume);
-                }
+                for (int i = 3; i < args.length; i++) parseFlag(args[i], flags);
             }
             case "world" -> {
-                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice play <file> world <world> [volume] [pitch=P] [preset=X]"); return; }
+                if (args.length < 4) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av play <file> world <world> [volume] [pitch=P] [preset=X]")); return; }
                 World w = Bukkit.getWorld(args[3]);
-                if (w == null) { sender.sendMessage(prefix() + ChatColor.RED + "World tidak ditemukan: " + args[3]); return; }
+                if (w == null) { sender.sendMessage(AstolfoStyle.error("World tidak ditemukan: " + args[3])); return; }
                 targets.addAll(w.getPlayers());
-                for (int i = 4; i < args.length; i++) {
-                    String a = args[i];
-                    if (a.toLowerCase().startsWith("pitch=")) { pitch = parseDouble(a.substring(6), pitch); continue; }
-                    if (a.toLowerCase().startsWith("preset=")) { preset = a.substring(7); continue; }
-                    if (isNumber(a)) volume = parseDouble(a, volume);
-                }
+                for (int i = 4; i < args.length; i++) parseFlag(args[i], flags);
             }
             case "group" -> {
-                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice play <file> group <group>"); return; }
+                if (args.length < 4) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av play <file> group <group>")); return; }
                 var g = server.getGroupManager().getGroupByName(args[3]);
-                if (g == null) { sender.sendMessage(prefix() + ChatColor.RED + "Grup tidak ditemukan: " + args[3]); return; }
+                if (g == null) { sender.sendMessage(AstolfoStyle.error("Grup tidak ditemukan: " + args[3])); return; }
                 for (UUID m : server.getGroupManager().getMembers(g.id)) {
                     Player mp = Bukkit.getPlayer(m);
                     if (mp != null) targets.add(mp);
                 }
-                for (int i = 4; i < args.length; i++) {
-                    String a = args[i];
-                    if (a.toLowerCase().startsWith("pitch=")) { pitch = parseDouble(a.substring(6), pitch); continue; }
-                    if (a.toLowerCase().startsWith("preset=")) { preset = a.substring(7); }
-                }
+                for (int i = 4; i < args.length; i++) parseFlag(args[i], flags);
             }
             case "location" -> {
-                if (args.length < 8) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=X]"); return; }
+                if (args.length < 8) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=X]")); return; }
                 locWorld = args[3];
                 World w = Bukkit.getWorld(locWorld);
-                if (w == null) { sender.sendMessage(prefix() + ChatColor.RED + "World tidak ditemukan: " + locWorld); return; }
+                if (w == null) { sender.sendMessage(AstolfoStyle.error("World tidak ditemukan: " + locWorld)); return; }
                 try {
                     lx = Double.parseDouble(args[4]);
                     ly = Double.parseDouble(args[5]);
                     lz = Double.parseDouble(args[6]);
                 } catch (NumberFormatException e) {
-                    sender.sendMessage(prefix() + ChatColor.RED + "Koordinat x/y/z tidak valid.");
+                    sender.sendMessage(AstolfoStyle.error("Koordinat x/y/z tidak valid."));
                     return;
                 }
                 isLocation = true;
-                targets.addAll(w.getPlayers()); // listener = player di world itu; attenuasi per-jarak oleh engine.
+                targets.addAll(w.getPlayers());
                 int idx = 7;
                 if (args.length > idx && isNumber(args[idx])) { distance = parseDouble(args[idx], distance); idx++; }
-                if (args.length > idx && isNumber(args[idx])) { volume = parseDouble(args[idx], volume); idx++; }
-                for (int i = idx; i < args.length; i++) {
-                    String a = args[i];
-                    if (a.toLowerCase().startsWith("pitch=")) { pitch = parseDouble(a.substring(6), pitch); continue; }
-                    if (a.toLowerCase().startsWith("preset=")) { preset = a.substring(7); }
-                }
+                if (args.length > idx && isNumber(args[idx])) { flags.volume = parseDouble(args[idx], flags.volume); idx++; }
+                for (int i = idx; i < args.length; i++) parseFlag(args[i], flags);
             }
-            default -> { sender.sendMessage(prefix() + ChatColor.RED + "Target tidak dikenal: " + target); return; }
+            default -> { sender.sendMessage(AstolfoStyle.error("Target tidak dikenal: " + target)); return; }
         }
 
-        if (targets.isEmpty()) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Tidak ada target player online."); return; }
+        if (targets.isEmpty()) { sender.sendMessage(AstolfoStyle.info("Tidak ada target player online.")); return; }
         File resolved = audioEngine.resolveFile(file);
         if (resolved == null) {
-            sender.sendMessage(prefix() + ChatColor.RED + "File audio tidak ditemukan: " + file
-                    + " (cari di plugins/AstolfoVoice/audio, format mp3/ogg/wav)");
+            sender.sendMessage(AstolfoStyle.error("File audio tidak ditemukan: " + file + " (cari di plugins/AstolfoVoice/audio)"));
             return;
         }
-        PlaybackOptions opts = new PlaybackOptions().setVolume(volume).setDistance(distance).setPitch(pitch).setPreset(preset);
+        PlaybackOptions opts = new PlaybackOptions().setVolume(flags.volume).setDistance(distance).setPitch(flags.pitch).setPreset(flags.preset);
         PlaybackHandle handle;
         if (isLocation) {
             org.bukkit.Location loc = new org.bukkit.Location(Bukkit.getWorld(locWorld), lx, ly, lz);
@@ -199,14 +186,19 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             handle = audioEngine.playToTargets(targets, resolved.getName(), opts);
         }
         if (handle == null) {
-            sender.sendMessage(prefix() + ChatColor.RED + "Playback gagal (decode error atau kuota penuh). Cek log.");
+            sender.sendMessage(AstolfoStyle.error("Playback gagal (decode error atau kuota penuh). Cek log."));
             return;
         }
         for (Player tg : targets) playerHandles.computeIfAbsent(tg.getUniqueId(), k -> new ArrayList<>()).add(handle);
-        String extra = (pitch != 1.0 ? " pitch=" + pitch : "") + (preset != null ? " preset=" + preset : "");
-        sender.sendMessage(prefix() + ChatColor.GREEN + "Memutar '" + resolved.getName() + "' ke "
-                + targets.size() + " target (" + target + (isLocation ? " @ " + locWorld + " " + lx + "," + ly + "," + lz : "")
-                + ")" + extra + ".");
+        ding(sender);
+        Component msg = AstolfoStyle.prefix()
+                .append(Component.text("Memutar ", AstolfoStyle.CREAM))
+                .append(Component.text("'" + resolved.getName() + "'", AstolfoStyle.CANDY).decoration(TextDecoration.ITALIC, true))
+                .append(Component.text(" ke " + targets.size() + " target ", AstolfoStyle.CREAM))
+                .append(Component.text("(" + target + (isLocation ? " @ " + locWorld + " " + lx + "," + ly + "," + lz : "") + ")", AstolfoStyle.MUTE));
+        if (flags.pitch != 1.0) msg = msg.append(Component.text(" pitch=" + flags.pitch, AstolfoStyle.LAV));
+        if (flags.preset != null) msg = msg.append(Component.text(" preset=" + flags.preset, AstolfoStyle.HOT));
+        sender.sendMessage(msg);
     }
 
     // ============ STOP ============
@@ -217,70 +209,72 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
             int n = audioEngine.activeCount();
             audioEngine.stopAll();
             playerHandles.clear();
-            sender.sendMessage(prefix() + ChatColor.GREEN + "Stop semua playback (" + n + ").");
+            sender.sendMessage(AstolfoStyle.success("Stop semua playback (" + n + ")."));
         } else if (args[1].equalsIgnoreCase("player") && args.length > 2) {
             Player p = Bukkit.getPlayerExact(args[2]);
-            if (p == null) { sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan."); return; }
+            if (p == null) { sender.sendMessage(AstolfoStyle.error("Player tidak ditemukan.")); return; }
             List<PlaybackHandle> list = playerHandles.remove(p.getUniqueId());
             if (list != null) for (PlaybackHandle h : list) h.stop();
-            sender.sendMessage(prefix() + ChatColor.GREEN + "Stop playback untuk " + p.getName() + ".");
+            sender.sendMessage(AstolfoStyle.success("Stop playback untuk " + p.getName() + "."));
         } else {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice stop [all | player <name>]");
+            sender.sendMessage(AstolfoStyle.info("Penggunaan: /av stop [all | player <name>]"));
         }
     }
 
-    // ============ LIST (clickable) ============
+    // ============ LIST (clickable, pink) ============
     private void handleList(CommandSender sender) {
         if (!sender.hasPermission("astolfo.list")) { noPerm(sender); return; }
         File audioDir = audioEngine != null ? audioEngine.getAudioDir() : new File(plugin.getDataFolder(), config.audioFolder());
+        sender.sendMessage(AstolfoStyle.header("Folder audio"));
         if (sender instanceof Player player) {
-            player.sendMessage(Component.text("[Astolfo] Folder audio: ", NamedTextColor.LIGHT_PURPLE)
-                    .append(Component.text(audioDir.getPath(), NamedTextColor.WHITE)));
+            player.sendMessage(Component.text("  ", AstolfoStyle.BLUSH).append(Component.text(audioDir.getPath(), AstolfoStyle.MUTE)));
         } else {
-            sender.sendMessage(prefix() + ChatColor.AQUA + "Folder audio: " + audioDir.getPath());
+            sender.sendMessage(AstolfoStyle.info(audioDir.getPath()));
         }
         File[] files = audioDir.listFiles((d, n) -> n.endsWith(".mp3") || n.endsWith(".ogg") || n.endsWith(".wav"));
         if (files == null || files.length == 0) {
-            sender.sendMessage(prefix() + ChatColor.YELLOW + "Belum ada file audio. Letakkan mp3/ogg/wav di folder tersebut.");
+            sender.sendMessage(AstolfoStyle.info("Belum ada file audio. Letakkan mp3/ogg/wav di folder itu~"));
             return;
         }
         boolean canClick = sender instanceof Player;
+        if (canClick) ((Player) sender).sendMessage(AstolfoStyle.divider());
         for (File f : files) {
             String name = f.getName();
             String size = (f.length() / 1024) + " KB";
             if (canClick) {
-                Component line = Component.text(" - ", NamedTextColor.GRAY)
-                        .append(Component.text(name, NamedTextColor.AQUA, TextDecoration.UNDERLINED)
+                Component line = Component.text("  ♪ ", AstolfoStyle.CANDY)
+                        .append(Component.text(name, CLICK, TextDecoration.UNDERLINED)
                                 .clickEvent(ClickEvent.runCommand("/av play " + name + " all"))
-                                .hoverEvent(Component.text("Klik untuk putar ke semua player online", NamedTextColor.YELLOW)))
-                        .append(Component.text(" (" + size + ")", NamedTextColor.GRAY));
+                                .hoverEvent(HoverEvent.showText(Component.text("Klik untuk putar ke semua~ ♡", AstolfoStyle.LAV))))
+                        .append(Component.text("  " + size, AstolfoStyle.MUTE));
                 ((Player) sender).sendMessage(line);
             } else {
-                sender.sendMessage(ChatColor.GRAY + " - " + name + " (" + size + ")");
+                sender.sendMessage(AstolfoStyle.item(name, size));
             }
         }
         if (canClick) {
-            ((Player) sender).sendMessage(Component.text("Klik nama file untuk memutarnya.", NamedTextColor.DARK_GRAY, TextDecoration.ITALIC));
+            ((Player) sender).sendMessage(Component.text("  Klik nama untuk putar ✿", AstolfoStyle.MUTE).decoration(TextDecoration.ITALIC, true));
         }
     }
 
     // ============ VOICERANGE ============
     private void handleVoiceRange(CommandSender sender, String[] args) {
         if (!sender.hasPermission("astolfo.voicerange")) { noPerm(sender); return; }
-        if (args.length < 2) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice voicerange <player> [range]"); return; }
+        if (args.length < 2) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av voicerange <player> [range]")); return; }
         Player target = Bukkit.getPlayerExact(args[1]);
-        if (target == null) { sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan: " + args[1]); return; }
+        if (target == null) { sender.sendMessage(AstolfoStyle.error("Player tidak ditemukan: " + args[1])); return; }
         if (args.length == 2) {
             Double ov = plugin.getApi().getVoiceRange(target.getUniqueId());
-            sender.sendMessage(prefix() + ChatColor.AQUA + target.getName() + " voice range: " + ov);
+            sender.sendMessage(AstolfoStyle.prefix().append(Component.text(target.getName() + " voice range: ", AstolfoStyle.CREAM))
+                    .append(Component.text(String.valueOf(ov), AstolfoStyle.CANDY)));
         } else {
             try {
                 double range = Double.parseDouble(args[2]);
                 range = Math.min(range, config.maxPlayerRangeOverride());
                 plugin.getApi().setVoiceRange(target.getUniqueId(), range);
-                sender.sendMessage(prefix() + ChatColor.GREEN + target.getName() + " voice range di-set " + range);
+                sender.sendMessage(AstolfoStyle.success(target.getName() + " voice range di-set " + range + " ✿"));
             } catch (NumberFormatException e) {
-                sender.sendMessage(prefix() + ChatColor.RED + "Range tidak valid: " + args[2]);
+                sender.sendMessage(AstolfoStyle.error("Range tidak valid: " + args[2]));
             }
         }
     }
@@ -289,41 +283,41 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
     private void handleStatus(CommandSender sender, String[] args) {
         if (args.length > 1) {
             Player target = Bukkit.getPlayerExact(args[1]);
-            if (target == null) { sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan: " + args[1]); return; }
+            if (target == null) { sender.sendMessage(AstolfoStyle.error("Player tidak ditemukan: " + args[1])); return; }
             PlayerState state = server.getPlayerStateManager().getState(target.getUniqueId());
             double range = plugin.getApi().getVoiceRange(target.getUniqueId());
-            if (state == null) { sender.sendMessage(prefix() + ChatColor.YELLOW + target.getName() + ": belum ter-track."); return; }
-            sender.sendMessage(prefix() + ChatColor.AQUA + target.getName()
-                    + " | connected=" + !state.isDisconnected()
-                    + " | disabled=" + state.isDisabled()
-                    + " | group=" + (state.hasGroup() ? state.getGroup() : "-")
-                    + " | range=" + range
-                    + " | world=" + (target.getWorld() != null ? target.getWorld().getName() : "-"));
+            if (state == null) { sender.sendMessage(AstolfoStyle.info(target.getName() + ": belum ter-track.")); return; }
+            sender.sendMessage(AstolfoStyle.prefix().append(Component.text(target.getName(), AstolfoStyle.CANDY))
+                    .append(Component.text("  conn=" + !state.isDisconnected() + "  disabled=" + state.isDisabled()
+                            + "  range=" + range + "  world=" + (target.getWorld() != null ? target.getWorld().getName() : "-"), AstolfoStyle.CREAM)));
         } else {
             int tracked = server.getPlayerStateManager().allStates().size();
             int active = audioEngine != null ? audioEngine.activeCount() : 0;
             int groups = server.getGroupManager().allGroups().size();
-            int playlists = this.playlists.all().size();
-            sender.sendMessage(prefix() + ChatColor.AQUA + "Status: " + tracked + " tracked, "
-                    + groups + " grup, " + active + " playback, " + playlists + " playlist");
+            int pl = this.playlists.all().size();
+            sender.sendMessage(AstolfoStyle.prefix().append(Component.text("Status: ", AstolfoStyle.CREAM))
+                    .append(Component.text(tracked + " tracked", AstolfoStyle.CANDY)).append(Component.text(" • ", AstolfoStyle.BLUSH))
+                    .append(Component.text(groups + " grup", AstolfoStyle.LAV)).append(Component.text(" • ", AstolfoStyle.BLUSH))
+                    .append(Component.text(active + " playback", AstolfoStyle.HOT)).append(Component.text(" • ", AstolfoStyle.BLUSH))
+                    .append(Component.text(pl + " playlist", AstolfoStyle.CANDY)));
         }
     }
 
     // ============ RESET ============
     private void handleReset(CommandSender sender, String[] args) {
         if (!sender.hasPermission("astolfo.reset")) { noPerm(sender); return; }
-        if (args.length < 2) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice reset <player>"); return; }
+        if (args.length < 2) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av reset <player>")); return; }
         Player target = Bukkit.getPlayerExact(args[1]);
-        if (target == null) { sender.sendMessage(prefix() + ChatColor.RED + "Player tidak ditemukan: " + args[1]); return; }
+        if (target == null) { sender.sendMessage(AstolfoStyle.error("Player tidak ditemukan: " + args[1])); return; }
         plugin.getApi().resetPlayer(target.getUniqueId());
-        sender.sendMessage(prefix() + ChatColor.GREEN + "Reset " + target.getName() + " (voice range & override).");
+        sender.sendMessage(AstolfoStyle.success("Reset " + target.getName() + " (voice range & override) ♡"));
     }
 
     // ============ RELOAD ============
     private void handleReload(CommandSender sender) {
         if (!sender.hasPermission("astolfo.reload")) { noPerm(sender); return; }
         plugin.reloadConfig();
-        sender.sendMessage(prefix() + ChatColor.GREEN + "Config di-reload (socket tidak restart kecuali port/MTU berubah).");
+        sender.sendMessage(AstolfoStyle.success("Config di-reload ✦"));
     }
 
     // ============ PLAYLIST ============
@@ -333,80 +327,80 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
         String sub = args[1].toLowerCase();
         switch (sub) {
             case "create" -> {
-                if (args.length < 3) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist create <name>"); return; }
-                if (playlists.create(args[2])) sender.sendMessage(prefix() + ChatColor.GREEN + "Playlist '" + args[2] + "' dibuat.");
-                else sender.sendMessage(prefix() + ChatColor.RED + "Playlist sudah ada: " + args[2]);
+                if (args.length < 3) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist create <name>")); return; }
+                if (playlists.create(args[2])) sender.sendMessage(AstolfoStyle.success("Playlist '" + args[2] + "' dibuat ♡"));
+                else sender.sendMessage(AstolfoStyle.error("Playlist sudah ada: " + args[2]));
             }
             case "delete" -> {
-                if (args.length < 3) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist delete <name>"); return; }
-                if (playlists.delete(args[2])) sender.sendMessage(prefix() + ChatColor.GREEN + "Playlist '" + args[2] + "' dihapus.");
-                else sender.sendMessage(prefix() + ChatColor.RED + "Playlist tidak ditemukan: " + args[2]);
+                if (args.length < 3) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist delete <name>")); return; }
+                if (playlists.delete(args[2])) sender.sendMessage(AstolfoStyle.success("Playlist '" + args[2] + "' dihapus ✦"));
+                else sender.sendMessage(AstolfoStyle.error("Playlist tidak ditemukan: " + args[2]));
             }
             case "add" -> {
-                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist add <name> <file> [file ...]"); return; }
+                if (args.length < 4) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist add <name> <file> [file ...]")); return; }
                 String name = args[2];
                 int added = 0;
                 for (int i = 3; i < args.length; i++) {
                     if (audioEngine != null && audioEngine.resolveFile(args[i]) == null) {
-                        sender.sendMessage(prefix() + ChatColor.RED + "File tidak ditemukan: " + args[i] + " (skip)");
+                        sender.sendMessage(AstolfoStyle.error("File tidak ditemukan: " + args[i] + " (skip)"));
                         continue;
                     }
                     playlists.add(name, args[i]);
                     added++;
                 }
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Tambah " + added + " file ke playlist '" + name + "'.");
+                sender.sendMessage(AstolfoStyle.success("Tambah " + added + " file ke playlist '" + name + "' ✿"));
             }
             case "remove" -> {
-                if (args.length < 4) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist remove <name> <file>"); return; }
-                if (playlists.remove(args[2], args[3])) sender.sendMessage(prefix() + ChatColor.GREEN + "File dihapus dari playlist.");
-                else sender.sendMessage(prefix() + ChatColor.RED + "File/playlist tidak ditemukan.");
+                if (args.length < 4) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist remove <name> <file>")); return; }
+                if (playlists.remove(args[2], args[3])) sender.sendMessage(AstolfoStyle.success("File dihapus dari playlist."));
+                else sender.sendMessage(AstolfoStyle.error("File/playlist tidak ditemukan."));
             }
             case "shuffle" -> {
-                if (args.length < 3) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist shuffle <name>"); return; }
-                if (playlists.shuffle(args[2])) sender.sendMessage(prefix() + ChatColor.GREEN + "Playlist '" + args[2] + "' di-shuffle.");
-                else sender.sendMessage(prefix() + ChatColor.RED + "Playlist tidak ditemukan/kosong: " + args[2]);
+                if (args.length < 3) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist shuffle <name>")); return; }
+                if (playlists.shuffle(args[2])) sender.sendMessage(AstolfoStyle.success("Playlist '" + args[2] + "' di-shuffle ✦"));
+                else sender.sendMessage(AstolfoStyle.error("Playlist tidak ditemukan/kosong: " + args[2]));
             }
             case "list" -> {
                 if (args.length < 3) {
                     Map<String, List<String>> all = playlists.all();
-                    if (all.isEmpty()) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Belum ada playlist."); return; }
+                    if (all.isEmpty()) { sender.sendMessage(AstolfoStyle.info("Belum ada playlist~")); return; }
                     boolean canClick = sender instanceof Player;
-                    if (canClick) ((Player) sender).sendMessage(Component.text("[Astolfo] Playlist:", NamedTextColor.LIGHT_PURPLE));
-                    else sender.sendMessage(prefix() + ChatColor.AQUA + "Playlist:");
+                    sender.sendMessage(AstolfoStyle.header("Playlist"));
+                    if (canClick) ((Player) sender).sendMessage(AstolfoStyle.divider());
                     for (var e : all.entrySet()) {
                         if (canClick) {
-                            ((Player) sender).sendMessage(Component.text(" - ", NamedTextColor.GRAY)
-                                    .append(Component.text(e.getKey(), NamedTextColor.AQUA, TextDecoration.UNDERLINED)
+                            ((Player) sender).sendMessage(Component.text("  ♡ ", AstolfoStyle.CANDY)
+                                    .append(Component.text(e.getKey(), CLICK, TextDecoration.UNDERLINED)
                                             .clickEvent(ClickEvent.runCommand("/av playlist play " + e.getKey() + " all"))
-                                            .hoverEvent(Component.text("Klik untuk putar playlist ke semua player", NamedTextColor.YELLOW)))
-                                    .append(Component.text(" (" + e.getValue().size() + " file)", NamedTextColor.GRAY)));
+                                            .hoverEvent(HoverEvent.showText(Component.text("Klik untuk putar playlist ✿", AstolfoStyle.LAV))))
+                                    .append(Component.text("  " + e.getValue().size() + " file", AstolfoStyle.MUTE)));
                         } else {
-                            sender.sendMessage(ChatColor.AQUA + e.getKey() + ChatColor.GRAY + " (" + e.getValue().size() + " file)");
+                            sender.sendMessage(AstolfoStyle.item(e.getKey(), "(" + e.getValue().size() + " file)"));
                         }
                     }
                 } else {
                     List<String> list = playlists.get(args[2]);
-                    if (list == null) { sender.sendMessage(prefix() + ChatColor.RED + "Playlist tidak ditemukan: " + args[2]); return; }
-                    sender.sendMessage(prefix() + ChatColor.AQUA + "Playlist '" + args[2] + "' (" + list.size() + " file):");
+                    if (list == null) { sender.sendMessage(AstolfoStyle.error("Playlist tidak ditemukan: " + args[2])); return; }
+                    sender.sendMessage(AstolfoStyle.header("Playlist '" + args[2] + "' (" + list.size() + ")"));
                     boolean canClick = sender instanceof Player;
                     for (int i = 0; i < list.size(); i++) {
                         String fn = list.get(i);
                         if (canClick) {
-                            ((Player) sender).sendMessage(Component.text(" " + (i + 1) + ". ", NamedTextColor.GRAY)
-                                    .append(Component.text(fn, NamedTextColor.AQUA, TextDecoration.UNDERLINED)
+                            ((Player) sender).sendMessage(Component.text("  " + (i + 1) + ". ", AstolfoStyle.MUTE)
+                                    .append(Component.text(fn, CLICK, TextDecoration.UNDERLINED)
                                             .clickEvent(ClickEvent.runCommand("/av play " + fn + " all"))
-                                            .hoverEvent(Component.text("Klik untuk putar file ini", NamedTextColor.YELLOW))));
+                                            .hoverEvent(HoverEvent.showText(Component.text("Klik untuk putar file ini ♡", AstolfoStyle.LAV)))));
                         } else {
-                            sender.sendMessage(ChatColor.GRAY + " " + (i + 1) + ". " + fn);
+                            sender.sendMessage(AstolfoStyle.item(String.valueOf(i + 1), fn));
                         }
                     }
                 }
             }
             case "play" -> {
-                if (args.length < 3) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Penggunaan: /astolfovoice playlist play <name> [player <p1> ... | world <w> | all] [shuffle]"); return; }
-                if (audioEngine == null) { sender.sendMessage(prefix() + ChatColor.RED + "Audio engine nonaktif."); return; }
+                if (args.length < 3) { sender.sendMessage(AstolfoStyle.info("Penggunaan: /av playlist play <name> [player <p> ... | world <w> | all] [shuffle]")); return; }
+                if (audioEngine == null) { sender.sendMessage(AstolfoStyle.error("Audio engine nonaktif.")); return; }
                 String name = args[2];
-                if (!playlists.exists(name)) { sender.sendMessage(prefix() + ChatColor.RED + "Playlist tidak ditemukan: " + name); return; }
+                if (!playlists.exists(name)) { sender.sendMessage(AstolfoStyle.error("Playlist tidak ditemukan: " + name)); return; }
                 boolean shuffle = false;
                 List<Player> targets = new ArrayList<>();
                 if (args.length > 3) {
@@ -430,79 +424,138 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
                                 if (args.length > 5 && args[5].equalsIgnoreCase("shuffle")) shuffle = true;
                             }
                         }
-                        default -> {
-                            if (tgt.equals("shuffle")) { shuffle = true; targets.addAll(Bukkit.getOnlinePlayers()); }
-                        }
+                        default -> { if (tgt.equals("shuffle")) { shuffle = true; targets.addAll(Bukkit.getOnlinePlayers()); } }
                     }
                 } else {
                     targets.addAll(Bukkit.getOnlinePlayers());
                 }
-                if (targets.isEmpty()) { sender.sendMessage(prefix() + ChatColor.YELLOW + "Tidak ada target online."); return; }
+                if (targets.isEmpty()) { sender.sendMessage(AstolfoStyle.info("Tidak ada target online.")); return; }
                 List<String> order = playlists.order(name, shuffle);
                 PlaybackOptions opts = new PlaybackOptions().setVolume(config.audioDefaultVolume()).setDistance(config.audioDefaultDistance());
                 PlaybackHandle handle = audioEngine.playQueue(targets, order, opts, false);
-                if (handle == null) { sender.sendMessage(prefix() + ChatColor.RED + "Gagal memutar playlist."); return; }
+                if (handle == null) { sender.sendMessage(AstolfoStyle.error("Gagal memutar playlist.")); return; }
                 for (Player t : targets) playerHandles.computeIfAbsent(t.getUniqueId(), k -> new ArrayList<>()).add(handle);
-                sender.sendMessage(prefix() + ChatColor.GREEN + "Memutar playlist '" + name + "' (" + order.size()
-                        + " file" + (shuffle ? ", shuffle" : "") + ") ke " + targets.size() + " target.");
+                ding(sender);
+                sender.sendMessage(AstolfoStyle.success("Memutar playlist '" + name + "' (" + order.size() + (shuffle ? ", shuffle" : "") + ") ke " + targets.size() + " target ✿"));
             }
             default -> playlistUsage(sender);
         }
     }
 
     private void playlistUsage(CommandSender sender) {
-        sender.sendMessage(prefix() + ChatColor.AQUA + "Playlist:");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist create <name>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist add <name> <file> [file ...]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist remove <name> <file>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist play <name> [player <p> ... | world <w> | all] [shuffle]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist list [name]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist shuffle <name>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist delete <name>");
+        sender.sendMessage(AstolfoStyle.header("Playlist"));
+        sender.sendMessage(AstolfoStyle.info("create <name>"));
+        sender.sendMessage(AstolfoStyle.info("add <name> <file> [file ...]"));
+        sender.sendMessage(AstolfoStyle.info("remove <name> <file>"));
+        sender.sendMessage(AstolfoStyle.info("play <name> [player <p> ... | world <w> | all] [shuffle]"));
+        sender.sendMessage(AstolfoStyle.info("list [name]"));
+        sender.sendMessage(AstolfoStyle.info("shuffle <name>"));
+        sender.sendMessage(AstolfoStyle.info("delete <name>"));
     }
 
     private void sendUsage(CommandSender sender) {
-        sender.sendMessage(prefix() + ChatColor.AQUA + "AstolfoVoice command (alias: /asv, /av, /astolfo):");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice play <file> player <p1> <p2> ... [volume] [pitch=P] [preset=PHONE]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice play <file> world <world> [volume] [pitch=P] [preset=PHONE]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice play <file> all [volume] [pitch=P] [preset=PHONE]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=PHONE]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice play <file> group <group>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice stop [all | player <name>]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice list   (klik file untuk putar)");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice voicerange <player> [range]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice status [player]");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice reset <player>");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice reload");
-        sender.sendMessage(ChatColor.GRAY + " /astolfovoice playlist ...");
-        sender.sendMessage(ChatColor.DARK_GRAY + " Preset: NONE, PHONE, RADIO, MEGA, CAVE. pitch=1.0 normal.");
+        sender.sendMessage(AstolfoStyle.header("AstolfoVoice  ✿"));
+        if (sender instanceof Player p) p.sendMessage(AstolfoStyle.divider());
+        sender.sendMessage(AstolfoStyle.info("play <file> player <p1> <p2> ... [volume] [pitch=P] [preset=KAWAII]"));
+        sender.sendMessage(AstolfoStyle.info("play <file> world <world> [volume] [pitch=P] [preset=KAWAII]"));
+        sender.sendMessage(AstolfoStyle.info("play <file> all [volume] [pitch=P] [preset=KAWAII]"));
+        sender.sendMessage(AstolfoStyle.info("play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=KAWAII]"));
+        sender.sendMessage(AstolfoStyle.info("play <file> group <group>"));
+        sender.sendMessage(AstolfoStyle.info("stop [all | player <name>]"));
+        sender.sendMessage(AstolfoStyle.info("list  (klik file untuk putar ♡)"));
+        sender.sendMessage(AstolfoStyle.info("voicerange <player> [range]"));
+        sender.sendMessage(AstolfoStyle.info("status [player]"));
+        sender.sendMessage(AstolfoStyle.info("reset <player>"));
+        sender.sendMessage(AstolfoStyle.info("reload"));
+        sender.sendMessage(AstolfoStyle.info("playlist ..."));
+        sender.sendMessage(Component.text("  Preset: ", AstolfoStyle.MUTE)
+                .append(Component.text("NONE PHONE RADIO MEGA CAVE KAWAII LOFI", AstolfoStyle.LAV))
+                .append(Component.text("  •  pitch=1.0 normal", AstolfoStyle.MUTE)));
     }
 
-    private String prefix() { return ChatColor.LIGHT_PURPLE + "[Astolfo] " + ChatColor.WHITE; }
-    private void noPerm(CommandSender s) { s.sendMessage(prefix() + ChatColor.RED + "Kamu tidak punya izin."); }
-    private double parseDouble(String s, double def) { try { return Double.parseDouble(s); } catch (NumberFormatException e) { return def; } }
-    private boolean isNumber(String s) { try { Double.parseDouble(s); return true; } catch (NumberFormatException e) { return false; } }
+    private void noPerm(CommandSender s) { s.sendMessage(AstolfoStyle.error("Kamu tidak punya izin~ ✗")); }
+    private void ding(CommandSender s) {
+        if (s instanceof Player p) {
+            try { p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BELL, 0.6f, 1.6f); } catch (Throwable ignored) {}
+        }
+    }
+    private static double parseDouble(String s, double def) { try { return Double.parseDouble(s); } catch (NumberFormatException e) { return def; } }
+    private static boolean isNumber(String s) { try { Double.parseDouble(s); return true; } catch (NumberFormatException e) { return false; } }
 
+    // ============ TAB COMPLETION (context-aware) ============
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
-        if (args.length == 1) {
-            for (String s : SUB) if (s.startsWith(args[0].toLowerCase())) out.add(s);
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("playlist")) {
-            for (String s : Arrays.asList("create", "add", "remove", "play", "list", "delete", "shuffle")) if (s.startsWith(args[1].toLowerCase())) out.add(s);
-        } else if (args.length == 2 && (args[0].equalsIgnoreCase("voicerange") || args[0].equalsIgnoreCase("status") || args[0].equalsIgnoreCase("reset"))) {
-            for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(args[1].toLowerCase())) out.add(p.getName());
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("play")) {
-            for (String t : Arrays.asList("player", "world", "all", "location", "group")) if (t.startsWith(args[2].toLowerCase())) out.add(t);
-        } else if (args.length == 4 && args[0].equalsIgnoreCase("play") && args[2].equalsIgnoreCase("player")) {
-            for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(args[3].toLowerCase())) out.add(p.getName());
-        } else if (args.length > 3 && args[0].equalsIgnoreCase("play")) {
-            String last = args[args.length - 1].toLowerCase();
-            if (last.isEmpty() || last.startsWith("preset") || last.startsWith("pitch")) {
-                for (String p : PRESETS) if (p.toLowerCase().startsWith(last.replace("preset=", ""))) out.add("preset=" + p);
-                if ("pitch=".startsWith(last) || last.startsWith("pitch")) out.add("pitch=1.0");
+        String last;
+        switch (args.length) {
+            case 1 -> { for (String s : SUB) if (s.startsWith(args[0].toLowerCase())) out.add(s); }
+            case 2 -> {
+                if (args[0].equalsIgnoreCase("playlist")) {
+                    for (String s : Arrays.asList("create", "add", "remove", "play", "list", "delete", "shuffle"))
+                        if (s.startsWith(args[1].toLowerCase())) out.add(s);
+                } else if (args[0].equalsIgnoreCase("voicerange") || args[0].equalsIgnoreCase("status") || args[0].equalsIgnoreCase("reset")) {
+                    for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(args[1].toLowerCase())) out.add(p.getName());
+                } else if (args[0].equalsIgnoreCase("play")) {
+                    out.addAll(audioFiles(args[1]));
+                }
+            }
+            case 3 -> {
+                if (args[0].equalsIgnoreCase("play"))
+                    for (String t : Arrays.asList("player", "world", "all", "location", "group")) if (t.startsWith(args[2].toLowerCase())) out.add(t);
+                if (args[0].equalsIgnoreCase("playlist") && args[1].matches("list|delete|shuffle|add|remove|play"))
+                    out.addAll(playlistNames(args[2]));
+            }
+            case 4 -> {
+                if (args[0].equalsIgnoreCase("play") && args[2].equalsIgnoreCase("player"))
+                    for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(args[3].toLowerCase())) out.add(p.getName());
+                if (args[0].equalsIgnoreCase("play") && (args[2].equalsIgnoreCase("world") || args[2].equalsIgnoreCase("location")))
+                    for (World w : Bukkit.getWorlds()) if (w.getName().toLowerCase().startsWith(args[3].toLowerCase())) out.add(w.getName());
+                if (args[0].equalsIgnoreCase("stop") && args[1].equalsIgnoreCase("player"))
+                    for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(args[3].toLowerCase())) out.add(p.getName());
+                if (args[0].equalsIgnoreCase("playlist") && args[1].matches("add|remove"))
+                    out.addAll(audioFiles(args[3]));
+                if (args[0].equalsIgnoreCase("playlist") && args[1].equalsIgnoreCase("play"))
+                    for (String t : Arrays.asList("player", "world", "all", "shuffle")) if (t.startsWith(args[3].toLowerCase())) out.add(t);
+            }
+            default -> {
+                last = args[args.length - 1].toLowerCase();
+                if (args[0].equalsIgnoreCase("play")) {
+                    // saran player tambahan bila belum ada flag
+                    boolean flagSeen = false;
+                    for (int i = 3; i < args.length - 1; i++) {
+                        String a = args[i].toLowerCase();
+                        if (a.startsWith("preset=") || a.startsWith("pitch=") || isNumber(args[i])) { flagSeen = true; break; }
+                    }
+                    if (!flagSeen && args[2].equalsIgnoreCase("player"))
+                        for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(last)) out.add(p.getName());
+                    if (last.startsWith("preset=")) for (String p : PRESETS) if (p.toLowerCase().startsWith(last.substring(7))) out.add("preset=" + p);
+                    else if (last.isEmpty()) out.add("preset=KAWAII");
+                    if (last.startsWith("pitch")) out.add("pitch=1.0");
+                    if (args[2].equalsIgnoreCase("world") && last.isEmpty()) out.add("1.0");
+                }
+                if (args[0].equalsIgnoreCase("playlist") && args[1].equalsIgnoreCase("play") && args.length > 4) {
+                    if (args[3].equalsIgnoreCase("player")) for (Player p : Bukkit.getOnlinePlayers()) if (p.getName().toLowerCase().startsWith(last)) out.add(p.getName());
+                    if (args[3].equalsIgnoreCase("world")) for (World w : Bukkit.getWorlds()) if (w.getName().toLowerCase().startsWith(last)) out.add(w.getName());
+                    if (last.isEmpty() || last.startsWith("shuffle")) out.add("shuffle");
+                }
             }
         }
         return out;
+    }
+
+    private List<String> audioFiles(String prefix) {
+        List<String> out = new ArrayList<>();
+        if (audioEngine == null) return out;
+        File dir = audioEngine.getAudioDir();
+        File[] files = dir.listFiles((d, n) -> n.endsWith(".mp3") || n.endsWith(".ogg") || n.endsWith(".wav"));
+        if (files == null) return out;
+        String p = prefix == null ? "" : prefix.toLowerCase();
+        for (File f : files) if (f.getName().toLowerCase().startsWith(p)) out.add(f.getName());
+        return out;
+    }
+
+    private List<String> playlistNames(String prefix) {
+        String p = prefix == null ? "" : prefix.toLowerCase();
+        return playlists.all().keySet().stream().filter(n -> n.toLowerCase().startsWith(p)).collect(Collectors.toList());
     }
 }

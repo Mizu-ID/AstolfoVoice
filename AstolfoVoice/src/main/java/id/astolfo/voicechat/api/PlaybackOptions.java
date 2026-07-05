@@ -9,13 +9,15 @@ package id.astolfo.voicechat.api;
  *   MEGA    - megaphone: highpass + slight gain + mild clip
  *   CAVE    - strong reverb + lowpass (gema ruang besar)
  *   RADIO   - bandpass narrow + light noise gate
+ *   KAWAII  - highpass lembut + reverb kecil + feel cerah (v0.2.2)
+ *   LOFI    - lowpass 3500 + reverb kecil + warm (v0.2.2)
  *
  * pitch: 1.0 normal, <1 lower/slower, >1 higher/faster (rate-based shift).
  */
 public final class PlaybackOptions {
 
     public enum Preset {
-        NONE, PHONE, MEGA, CAVE, RADIO
+        NONE, PHONE, MEGA, CAVE, RADIO, KAWAII, LOFI
     }
 
     private double volume = 1.0;
