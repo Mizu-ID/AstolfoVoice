@@ -8,7 +8,7 @@ semua sebagai subproject dengan toolchain Java 25 yang shared.
 
 | Folder         | Versi  | Status       | Deskripsi |
 |----------------|--------|--------------|-----------|
-| [`AstolfoVoice`](AstolfoVoice) | 0.1.0 | **Playable** | Proximity voice chat kompatibel protokol Simple Voice Chat, sound physics raytrace, range dinamis, noise cancellation server-side, playback mp3/ogg/wav. |
+| [`AstolfoVoice`](AstolfoVoice) | 0.2.0 | **Playable** | Proximity voice chat kompatibel protokol Simple Voice Chat, sound physics raytrace, range dinamis, noise cancellation server-side, playback mp3/ogg/wav. |
 
 ## Layout monorepo
 ```

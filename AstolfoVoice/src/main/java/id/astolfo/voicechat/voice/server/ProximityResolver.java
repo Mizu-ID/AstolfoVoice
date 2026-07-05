@@ -20,8 +20,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Urutan routing per mic packet:
  *  1) Group sound (bila sender di grup) → anggota grup.
  *  2) Private channel (bila sender di channel privat) → anggota lain channel,
- *     jarak tak terbatas bila audibleNearby=false (sekitar tidak dengar).
- *     Bila audibleNearby=true, anggota juga + orang dalam 'range' (lanjut proximity).
+ *     jarak tak terbatas antar anggota (distance besar FINITE, bukan Float.MAX_VALUE
+ *     yang bikin client SVC NaN/overflow). Bila audibleNearby=true, lanjut proximity.
  *  3) Proximity broadcast ke world, terapkan sound physics.
  *
  * Tier 1 (default): SoundPath → modulasi distance + whisper flag.
@@ -77,21 +77,19 @@ public final class ProximityResolver {
         var pcOptions = PrivateChannelRegistry.optionsOf(senderUuid);
         List<UUID> pcMembers = PrivateChannelRegistry.membersOf(senderUuid);
         if (pcMembers != null && pcOptions != null) {
-            // Kirim ke anggota lain dengan jarak tak terbatas (distance sangat besar → client tidak attenuate proximity).
+            // Distance besar FINITE (bukan Float.MAX_VALUE) supaya client SVC tidak
+            // overflow/NaN. maxPlayerRangeOverride default 1_000_000 → attenuation ~0.
+            float privateDistance = (float) Math.min(config.maxPlayerRangeOverride(), 1_000_000d);
             for (UUID member : pcMembers) {
                 if (member.equals(senderUuid)) continue;
                 Player listener = org.bukkit.Bukkit.getPlayer(member);
                 if (listener == null) continue;
-                // distance besar = terdengar penuh antar anggota (tak terbatas).
-                float distance = Float.MAX_VALUE;
-                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, distance, "astolfo_private");
+                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, privateDistance, "astolfo_private");
             }
             // Bila audibleNearby=false → sekitar TIDAK dengar: return (skip proximity).
             if (!pcOptions.isAudibleNearby()) {
                 return;
             }
-            // Bila true → lanjut proximity, tapi batasi ke pcOptions.range (orang dalam range dengar).
-            // (Proximity loop di bawah akan menyaring via broadcast range.)
         }
 
         Location senderLoc = sender.getEyeLocation();
@@ -124,6 +122,7 @@ public final class ProximityResolver {
                 if (!path.audible) continue;
                 effectiveDistance += path.distanceBias;
                 if (path.gain > 0f && path.gain < 1f) {
+                    // gain kecil → jarak efektif bertambah (terdengar lebih jauh/redam).
                     effectiveDistance += (float) (dist * (1.0 / path.gain - 1.0) * 0.5);
                 }
                 if (path.muffled && effectiveDistance > dr.range) {
