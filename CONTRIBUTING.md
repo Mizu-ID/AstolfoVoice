@@ -1,50 +1,54 @@
 <table width="100%"><tr>
-<td width="72" valign="middle" align="center">
-  <img src="astolfo.png" alt="Astolfo" width="60" style="border-radius:11px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 12px rgba(255,92,168,.28);" />
+<td width="84" valign="middle" align="center">
+  <img src="astolfo.png" alt="Astolfo" width="68" style="border-radius:12px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 12px rgba(255,92,168,.28);" />
 </td>
 <td valign="middle">
 
-# Contributing to <span style="color:#ff5ca8">Astolfo</span> ✿
+# Contributing to Astolfo ♡
+
+<p><sub style="color:#d8b4e2">makasih udah mau bantu bikin voice chat makin imut & kenceng</sub></p>
 
 </td>
 </tr></table>
 
 &nbsp;
 
-Terima kasih tertarik kontribusi ke ekosistem plugin **Astolfo** ♡
+Sebelum mulai ngoding, ada beberapa hal yang good-to-know biar kontribusimu gampang
+diterima dan gak bikin client SVC rusak connect.
 
 &nbsp;
 
-## ⋆ Lisensi
+## Lisensi
 
 <table width="100%"><tr>
 <td valign="top">
 
 Semua kontribusi jatuh di bawah **GPL-3.0** (lihat [LICENSE](LICENSE)). `AstolfoVoice`
-adalah reimplementasi protokol [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat)
-(henkelmax); protokol direimplementasi bersih, bukan copy-paste. Dengan kontribusi kamu,
-kamu set kode kamu dirilis di bawah GPL-3.0 yang sama.
+itu reimplementasi protokol [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat)
+(henkelmax) — dibuat ulang bersih, bukan copy-paste. Dengan kontribusi kamu, kamu set
+kode kamu dirilis di bawah GPL-3.0 yang sama.
 
 </td>
-<td width="44" valign="middle" align="center">
-  <img src="astolfo2.png" alt="✿" width="38" style="border-radius:9px; box-shadow:0 0 0 2px #ffd6e7; opacity:.9;" />
+<td width="92" valign="middle" align="center">
+  <img src="astolfo2.png" alt="" width="58" style="border-radius:10px; box-shadow:0 0 0 2px #ffd6e7; opacity:.92;" />
 </td>
 </tr></table>
 
 &nbsp;
 
-## ✿ Sebelum mulai
-- Repo monorepo Gradle (Java 25 toolchain, Gradle 9.6.1). Tiap plugin subproject sendiri.
-- Target utama **Paper 1.21+** (raytrace Paper API, Adventure). Spigot fallback fitur dasar.
-- Bukan mod client. Bukan NMS-reflection 1.8–1.20 penuh.
+## Sebelum mulai
+
+- Repo monorepo Gradle (toolchain Java 25, Gradle 9.6.1). Tiap plugin subproject sendiri.
+- Target utama **Paper 1.21+** (raytrace Paper API + Adventure). Spigot = fallback fitur dasar.
+- Bukan mod client. Bukan NMS-reflection 1.8–1.20 penuh kayak SVC aslinya.
 
 &nbsp;
 
-## ♡ Build & cek
+## Build & cek
 
 <table width="100%"><tr>
-<td width="44" valign="top" align="center">
-  <img src="astolfo.png" alt="♡" width="36" style="border-radius:9px; box-shadow:0 0 0 2px #ffd6e7; opacity:.9;" />
+<td width="92" valign="top" align="center">
+  <img src="astolfo.png" alt="" width="58" style="border-radius:10px; box-shadow:0 0 0 2px #ffd6e7; opacity:.92;" />
 </td>
 <td valign="top">
 
@@ -52,41 +56,58 @@ kamu set kode kamu dirilis di bawah GPL-3.0 yang sama.
 ./gradlew :AstolfoVoice:compileJava        # compile cepat
 ./gradlew :AstolfoVoice:shadowJar          # fat-jar -> AstolfoVoice/build/libs/
 ```
-Build pertama butuh online (tarik Paper API + deps dari maven), setelah itu `--offline`.
 
-Saat buka PR, pastikan:
+Build pertama butuh online (tarik Paper API + deps), setelah itu bisa `--offline`.
+
+Saat buka PR, tolong pastiin:
 - `compileJava` lulus tanpa error/warning baru.
-- **Tidak ada TODO/FIXME/stub/empty-method** yang baru (repo jaga zero-marker).
-- Tidak menambah dependensi native yang gak portable, kecuali ada fallback pure-Java.
-- Protokol wire format tetap byte-exact kompatibel client SVC (lihat
-  `AstolfoVoice/docs/PROTOCOL_REFERENCE.md`) kalau menyentuh paket.
+- **Gak ada TODO/FIXME/stub/empty-method** baru — repo ini jaga zero-marker.
+- Gak nambah dependensi native yang gak portable, kecuali ada fallback pure-Java.
+- Wire format tetap byte-exact kompatibel client SVC (lihat
+  `AstolfoVoice/docs/PROTOCOL_REFERENCE.md`) kalau kamu menyentuh paket.
 
 </td>
 </tr></table>
 
 &nbsp;
 
-## ✦ Kompatibilitas Simple Voice Chat
-Hal paling krusial: client SVC biasa harus tetap connect. Jangan ubah:
+## Kompatibilitas Simple Voice Chat ✿
+
+Hal paling krusial: client SVC biasa harus tetap bisa connect tanpa diapa-apain. Jangan utak-atik:
+
 - Namespace channel `voicechat:*` (bukan `astolfo:*`).
-- UDP envelope `[0xFF][UUID][IV+AES-GCM]` + 10 tipe paket + field order.
-- Konstanta audio (Opus 48k/20ms/960, MTU 1275).
+- UDP envelope `[0xFF][UUID][IV+AES-GCM]` + 10 tipe paket + urutan field.
+- Konstanta audio: Opus 48k / 20ms / 960, MTU 1275.
 
 &nbsp;
 
-## ⋆ Style
-- Java, package `id.astolfo.*`. Final class kecuali butuh extend.
-- Async via virtual thread (`Thread.ofVirtual()`) untuk pekerjaan I/O/DSP berat.
-- Raytrace **main-thread** (Bukkit aman); cache hasil per tick, DSP worker baca cache.
-- Jangan spill NMS; pakai Paper API publik.
+## Style
+
+<table width="100%"><tr>
+<td valign="top">
+
+- Java, package `id.astolfo.*`. `final class` kecuali emang butuh di-extend.
+- Async via **virtual thread** (`Thread.ofVirtual()`) buat kerjaan I/O/DSP berat.
+- Raytrace jalan di **main-thread** (Bukkit aman); cache hasil per tick, DSP worker baca cache.
+- Jangan spill NMS — pakai Paper API publik aja.
+- Visual: palet pink candy lewat `AstolfoStyle`, bukan `ChatColor` mentah. Dekorasi
+  imut yang hand-crafted, bukan emoji-spam generik.
+
+</td>
+<td width="92" valign="middle" align="center">
+  <img src="astolfo2.png" alt="" width="58" style="border-radius:10px; box-shadow:0 0 0 2px #ffd6e7; opacity:.92;" />
+</td>
+</tr></table>
 
 &nbsp;
 
-## ✿ Lapor bug / request fitur
-Buka issue pakai template (`.github/ISSUE_TEMPLATE/`). Kasih: versi plugin, versi
-Paper, log relevan, langkah reproduksi, dan apa yang diharapkan vs yang terjadi.
+## Lapor bug / usul fitur
+
+Buka issue pakai template di `.github/ISSUE_TEMPLATE/`. Kasih: versi plugin, versi
+Paper, log relevan, langkah reproduksi, plus apa yang kamu harap vs yang terjadi.
+Makin jelas, makin cepat kami tangani ♡
 
 <p align="right">
-  <img src="astolfo2.png" alt="♡" width="120" style="border-radius:14px; box-shadow:0 0 0 3px #ffb6c1, 0 6px 18px rgba(255,92,168,.28);" />
+  <img src="astolfo.png" alt="" width="150" style="border-radius:16px; box-shadow:0 0 0 3px #ffb6c1, 0 8px 22px rgba(255,92,168,.30);" />
 </p>
-<p align="center"><sub style="color:#d8b4e2">stay soft · contribute with ♡</sub></p>
+<p align="center"><sub style="color:#d8b4e2">stay soft, contribute with ♡</sub></p>
