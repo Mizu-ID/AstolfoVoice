@@ -1,4 +1,5 @@
 # AstolfoVoice
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](../LICENSE) [![Release](https://img.shields.io/github/v/release/Mizu-ID/Astolfo?include_prereleases)](https://github.com/Mizu-ID/Astolfo/releases) [![Paper](https://img.shields.io/badge/Paper-1.21%2B-00B2FF)](https://papermc.io)
 
 **Proximity voice chat** untuk Paper/Spigot/Bukkit, **kompatibel protokol** dengan
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat). Client SVC biasa
@@ -148,4 +149,4 @@ PrivateChannel, build fat-jar.
   untuk kompatibilitas byte-exact.
 
 ## Lisensi
-GPL-3.0 (mengikuti Simple Voice Chat, henkelmax). Protokol direimplementasi bersih.
+GPL-3.0 - lihat [LICENSE](../LICENSE). Mengikuti [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat) (henkelmax); protokol direimplementasi bersih.
