@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs / temp
+build_log.txt
+*.log
+
+# Misc local
+svc-verify/
+svc-ref/
+_*.ps1
+_*.txt

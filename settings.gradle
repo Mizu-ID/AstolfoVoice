@@ -1,0 +1,15 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+    }
+}
+
+rootProject.name = 'astolfo'
+
+// Setiap plugin Astolfo di-include di sini.
+include 'AstolfoVoice'
+
+project(':AstolfoVoice').projectDir = file('AstolfoVoice')
+project(':AstolfoVoice').name = 'AstolfoVoice'
