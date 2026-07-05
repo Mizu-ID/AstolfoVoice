@@ -10,6 +10,7 @@ import id.astolfo.voicechat.api.VoiceStatus;
 import id.astolfo.voicechat.audio.AudioEngine;
 import id.astolfo.voicechat.voice.common.PlayerState;
 import id.astolfo.voicechat.voice.server.AstolfoOverride;
+import id.astolfo.voicechat.voice.server.MuteHolder;
 import id.astolfo.voicechat.voice.server.GroupManager;
 import id.astolfo.voicechat.voice.server.PlayerStateManager;
 import id.astolfo.voicechat.voice.server.PrivateChannelRegistry;
@@ -40,7 +41,6 @@ public final class AstolfoApiImpl implements AstolfoApi {
     private final double defaultRange;
     private final AudioEngine audioEngine;
 
-    private final ConcurrentHashMap<UUID, Boolean> muted = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, PrivateChannelImpl> privateChannels = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<AstolfoListener> listeners = new CopyOnWriteArrayList<>();
 
@@ -69,7 +69,7 @@ public final class AstolfoApiImpl implements AstolfoApi {
     @Override
     public void resetPlayer(UUID player) {
         AstolfoOverride.remove(player);
-        muted.remove(player);
+        MuteHolder.remove(player);
     }
 
     // ---- Status ----
@@ -82,7 +82,7 @@ public final class AstolfoApiImpl implements AstolfoApi {
         boolean connected = state != null && !state.isDisconnected();
         UUID group = state != null ? state.getGroup() : null;
         return new VoiceStatusImpl(player, name, connected, state != null && state.isDisabled(),
-                muted.getOrDefault(player, false), false, getVoiceRange(player), group, world);
+                MuteHolder.isMuted(player), false, getVoiceRange(player), group, world);
     }
 
     // ---- Playback ----
@@ -177,10 +177,10 @@ public final class AstolfoApiImpl implements AstolfoApi {
     }
 
     public void setMuted(UUID player, boolean muted) {
-        this.muted.put(player, muted);
+        MuteHolder.set(player, muted);
     }
 
     public boolean isMuted(UUID player) {
-        return muted.getOrDefault(player, false);
+        return MuteHolder.isMuted(player);
     }
 }

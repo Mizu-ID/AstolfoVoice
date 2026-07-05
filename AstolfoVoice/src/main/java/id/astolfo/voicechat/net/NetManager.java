@@ -104,7 +104,9 @@ public final class NetManager {
             // Parameter lambda sengaja dinamai 'p' agar tidak menutupi field 'plugin'.
             Bukkit.getMessenger().registerIncomingPluginChannel(plugin, channel, (p, player, bytes) -> {
                 if (!rateLimiter.allow(player.getUniqueId())) {
-                    player.kickPlayer("Packet rate limit exceeded");
+                    // #4: kickPlayer harus di main thread (handler packet bisa async).
+                    final Player p0 = player;
+                    compatibility.runTask(() -> p0.kickPlayer("Packet rate limit exceeded"));
                     return;
                 }
                 try {

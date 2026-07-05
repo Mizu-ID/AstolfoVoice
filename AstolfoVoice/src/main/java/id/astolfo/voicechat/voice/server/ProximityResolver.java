@@ -6,6 +6,7 @@ import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.physics.SoundPhysicsEngine;
 import id.astolfo.voicechat.voice.common.AudioUtils;
 import id.astolfo.voicechat.voice.common.MicPacket;
+import id.astolfo.voicechat.voice.server.MuteHolder;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
@@ -46,6 +47,11 @@ public final class ProximityResolver {
     public void processMic(Player sender, MicPacket mic, ServerVoiceEvents server, long timestamp) {
         UUID senderUuid = sender.getUniqueId();
 
+        // Mute gate: sender mute tidak mengirim suara ke siapapun (server-side).
+        if (MuteHolder.isMuted(senderUuid)) {
+            return;
+        }
+
         // Dynamic range: decode opus → RMS dB → t.
         double loudnessDb = -128;
         boolean hasDecoded = false;
@@ -67,8 +73,12 @@ public final class ProximityResolver {
                 if (member.equals(senderUuid)) continue;
                 Player listener = org.bukkit.Bukkit.getPlayer(member);
                 if (listener == null) continue;
-                float distance = config.bypassPhysicsForGroups() ? (float) config.voiceRange() : dr.range;
-                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, distance, null);
+                // Bypass physics: distance besar FINITE (bukan voiceRange) supaya grup jernih tanpa attenuasi proximity, kaya SVC asli. whisper grup selalu false.
+                float distance = config.bypassPhysicsForGroups()
+                        ? (float) Math.min(config.maxPlayerRangeOverride(), 1_000_000d)
+                        : dr.range;
+                boolean groupWhisper = config.bypassPhysicsForGroups() ? false : dr.whisper;
+                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), groupWhisper, distance, null);
             }
             return;
         }
@@ -107,6 +117,12 @@ public final class ProximityResolver {
         for (Player listener : senderLoc.getWorld().getPlayers()) {
             if (listener.getUniqueId().equals(senderUuid)) continue;
             if (!server.isCompatible(listener)) continue;
+            // Spectator gate (#9): bila spectator_interaction=false, spectator gak dengar/bicara ke player biasa.
+            if (!config.spectatorInteraction()) {
+                boolean senderSpec = sender.getGameMode() == org.bukkit.GameMode.SPECTATOR;
+                boolean listenerSpec = listener.getGameMode() == org.bukkit.GameMode.SPECTATOR;
+                if (senderSpec || listenerSpec) continue;
+            }
             // skip anggota channel yang sudah dapat paket privat di atas (dapat dua kali = echo).
             if (pcMembers != null && pcMembers.contains(listener.getUniqueId())) continue;
             Location listenerLoc = listener.getEyeLocation();

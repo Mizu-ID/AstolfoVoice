@@ -316,8 +316,17 @@ public final class AstolfoCommand implements CommandExecutor, TabCompleter {
     // ============ RELOAD ============
     private void handleReload(CommandSender sender) {
         if (!sender.hasPermission("astolfo.reload")) { noPerm(sender); return; }
-        plugin.reloadConfig();
-        sender.sendMessage(AstolfoStyle.success("Config di-reload ✦"));
+        // #5: reload AstolfoConfig beneran (bukan cuma Bukkit config), lalu tunjukin nilai baru.
+        boolean ok = plugin.reloadAstolfoConfig();
+        if (ok) {
+            AstolfoConfig cfg = plugin.getAstolfoConfig();
+            sender.sendMessage(AstolfoStyle.prefix()
+                    .append(Component.text("Config di-reload ", AstolfoStyle.CREAM))
+                    .append(Component.text("range=" + cfg.voiceRange() + " whisper=" + cfg.whisperRange()
+                            + " shout=" + cfg.shoutRange() + " bitrate=" + cfg.opusBitrate(), AstolfoStyle.CANDY)));
+        } else {
+            sender.sendMessage(AstolfoStyle.error("Gagal reload config, cek log."));
+        }
     }
 
     // ============ PLAYLIST ============

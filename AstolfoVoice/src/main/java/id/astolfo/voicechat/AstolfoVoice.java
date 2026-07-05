@@ -12,6 +12,8 @@ import id.astolfo.voicechat.net.NetManager;
 import id.astolfo.voicechat.net.PacketRateLimiter;
 import id.astolfo.voicechat.voice.common.Codec;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
+import id.astolfo.voicechat.voice.server.AstolfoOverride;
+import id.astolfo.voicechat.voice.server.MuteHolder;
 import id.astolfo.voicechat.voice.server.VoiceServer;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -195,8 +197,31 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         netManager.unregisterChannelsFromPlayer(player);
         voiceEvents.disconnectClient(player.getUniqueId());
         voiceEvents.getPlayerStateManager().onPlayerQuit(player);
+        // #7: clear state per-player yang bocor saat quit (override, mute).
+        AstolfoOverride.remove(player.getUniqueId());
+        MuteHolder.remove(player.getUniqueId());
     }
 
+    // ---- Reload (#5) ----
+    /** Reload AstolfoConfig dari disk + apply nilai baru. Return true bila sukses. */
+    public boolean reloadAstolfoConfig() {
+        try {
+            File configFile = new File(getDataFolder(), "config.yml");
+            this.config = AstolfoConfig.load(configFile);
+            getLogger().info("AstolfoConfig reloaded: range=" + config.voiceRange()
+                    + " whisper=" + config.whisperRange() + " shout=" + config.shoutRange()
+                    + " bitrate=" + config.opusBitrate() + " port=" + config.port());
+            return true;
+        } catch (Exception e) {
+            getLogger().log(Level.WARNING, "Failed to reload AstolfoConfig", e);
+            return false;
+        }
+    }
+
+    @Override
+    public void reloadConfig() {
+        super.reloadConfig();
+    }
     // ---- Accessors ----
     public AstolfoConfig getAstolfoConfig() { return config; }
     public ServerVoiceEvents getVoiceEvents() { return voiceEvents; }

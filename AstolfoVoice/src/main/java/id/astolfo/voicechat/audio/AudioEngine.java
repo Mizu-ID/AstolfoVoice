@@ -42,11 +42,15 @@ public final class AudioEngine {
 
     public File resolveFile(String name) {
         if (name == null) return null;
-        File direct = new File(audioDir, name);
-        if (direct.exists()) return direct;
-        for (String ext : new String[]{"", ".mp3", ".ogg", ".wav"}) {
-            File f = new File(audioDir, name + ext);
-            if (f.exists()) return f;
+        // Path traversal hardening (#8): tolak ../, absolut, dan path yang keluar folder audio.
+        if (name.contains("..") || name.contains(File.separator) && new File(name).isAbsolute()) {
+            return null;
+        }
+        File direct = safeInside(name);
+        if (direct != null && direct.exists()) return direct;
+        for (String ext : new String[]{".mp3", ".ogg", ".wav"}) {
+            File f = safeInside(name + ext);
+            if (f != null && f.exists()) return f;
         }
         File[] files = audioDir.listFiles();
         if (files != null) {
@@ -54,11 +58,28 @@ public final class AudioEngine {
                 String n = f.getName();
                 if (n.equalsIgnoreCase(name) || n.equalsIgnoreCase(name + ".mp3")
                         || n.equalsIgnoreCase(name + ".ogg") || n.equalsIgnoreCase(name + ".wav")) {
+                    // hanya file di dalam audioDir (listFiles sudah top-level, tapi pastikan).
                     return f;
                 }
             }
         }
         return null;
+    }
+
+    /** Bangun file di dalam audioDir + verifikasi canonical path tetap di dalam. */
+    private File safeInside(String child) {
+        try {
+            File f = new File(audioDir, child).getCanonicalFile();
+            File base = audioDir.getCanonicalFile();
+            String fp = f.getPath();
+            String bp = base.getPath();
+            if (!fp.startsWith(bp + File.separator) && !fp.equals(bp)) {
+                return null; // keluar folder audio
+            }
+            return f;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public PlaybackHandle playToTargets(List<Player> targets, String file, PlaybackOptions options) {
