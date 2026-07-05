@@ -1,0 +1,65 @@
+name: AstolfoVoice
+version: ${project.version}
+main: id.astolfo.voicechat.AstolfoVoice
+api-version: '1.21'
+authors: [Mizu]
+description: Proximity voice chat kompatibel protokol Simple Voice Chat, dengan sound physics raytrace, noise cancellation server-side, range dinamis, dan playback audio.
+website: https://github.com/Mizu-ID/Astolfo
+load: STARTUP
+softdepend:
+  - PlaceholderAPI
+  - denizen
+  - Skript
+commands:
+  astolfo:
+    description: Perintah utama AstolfoVoice
+    usage: |
+      /astolfo play player <player> <file>
+      /astolfo play world <world> <file>
+      /astolfo play all <file>
+      /astolfo play location <world> <x> <y> <z> <file> [distance]
+      /astolfo play group <group> <file>
+      /astolfo stop [player|world|all|id]
+      /astolfo list
+      /astolfo voicerange <player> [range]
+      /astolfo broadcast <player|world|all> <file>
+      /astolfo status [player]
+      /astolfo reset <player>
+      /astolfo reload
+    aliases: [av, astolfovoice]
+    permission: astolfo.command
+    permission-message: Kamu tidak punya izin untuk perintah ini.
+permissions:
+  astolfo.command:
+    default: true
+  astolfo.admin:
+    default: op
+    children:
+      astolfo.command: true
+      astolfo.play: true
+      astolfo.stop: true
+      astolfo.voicerange: true
+      astolfo.broadcast: true
+      astolfo.status: true
+      astolfo.reset: true
+      astolfo.reload: true
+  astolfo.play:
+    default: op
+  astolfo.stop:
+    default: op
+  astolfo.voicerange:
+    default: op
+  astolfo.broadcast:
+    default: op
+  astolfo.status:
+    default: true
+  astolfo.reset:
+    default: op
+  astolfo.reload:
+    default: op
+  astolfo.shout:
+    default: true
+  astolfo.speak:
+    default: true
+  astolfo.listen:
+    default: true

@@ -1,0 +1,209 @@
+# =====================================================================
+# AstolfoVoice - Konfigurasi Server
+# Fork kompatibel protokol Simple Voice Chat (GPL-3.0)
+# =====================================================================
+# Catatan: protokol UDP & handshake SAMA dengan Simple Voice Chat biasa,
+# jadi client SVC standar tetap bisa connect tanpa ganti mod.
+# Buka port UDP 'port' di bawah agar voice chat berfungsi.
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# Jaringan & protokol (JANGAN diubah kecuali tahu konsekuensinya)
+# ---------------------------------------------------------------------
+network:
+  # Port UDP untuk voice chat. Default SVC = 24454.
+  # -1 = pakai port Minecraft server (TIDAK disarankan, bentrok query UDP).
+  port: 24454
+  # IP bind. Kosongkan = pakai server-ip server.properties. "*" = wildcard.
+  bind_address: ""
+  # Host yang dikirim ke client untuk connect. Kosong = otomatis.
+  # Bisa host:port, contoh "voice.contoh.com:24454"
+  voice_host: ""
+  # MTU maksimum paket audio (byte). 512-2048.
+  mtu_size: 1275
+  # Rate limit paket plugin-channel per detik per player. -1 = nonaktif.
+  tcp_rate_limit: 16
+  # Interval keepalive (ms). Timeout = keep_alive * 10.
+  keep_alive: 1000
+  # Waktu tunggu cek mod terpasang (ms). Hanya jika force_voice_chat=true.
+  login_timeout: 10000
+  # Balas ping eksternal (untuk server list dll).
+  allow_pings: true
+
+# ---------------------------------------------------------------------
+# Codec & kualitas audio
+# ---------------------------------------------------------------------
+audio_quality:
+  # Opus codec. Pilihan: VOIP, AUDIO, RESTRICTED_LOWDELAY
+  codec: VOIP
+  # Bitrate Opus (kbps). 6-510. 64 = standar VOIP jernih.
+  opus_bitrate: 64
+  # Sample rate internal (Hz). JANGAN diubah, client mengharapkan 48000.
+  sample_rate: 48000
+  # Ukuran frame (ms). 20 = standar SVC (960 sample). JANGAN diubah.
+  frame_size_ms: 20
+  # Izinkan player record voice chat.
+  allow_recording: true
+
+# ---------------------------------------------------------------------
+# Range suara
+# ---------------------------------------------------------------------
+voice_range:
+  # Jarak normal suara terdengar (block). 1-1000000.
+  voice_range: 48
+  # Jarak saat bisik (block).
+  whisper_range: 4
+  # Jarak maksimum saat "teriak" (block). Bisa > voice_range.
+  # Butuh permission astolfo.shout untuk mencapai batas ini.
+  shout_range: 96
+  # Aktifkan range dinamis berbasis kekuatan suara (RMS).
+  # false = whisper/normal binary seperti SVC biasa.
+  # true = jarak menyesuaikan: bisik kecil, teriak jauh.
+  dynamic_range_enabled: true
+  # Ambang dB untuk dianggap bisik (lebih pelan = lebih kecil jarak).
+  loudness_whisper_db: -45.0
+  # Ambang dB untuk dianggap teriak (mencapai shout_range).
+  loudness_shout_db: -15.0
+  # Range broadcast paket audio (block). <0 = voice_range + 1.
+  # Server kirim paket ke player dalam radius ini; attenuation akhir di client.
+  broadcast_range: -1
+  # Batas atas override range per-player via API/command.
+  max_player_range_override: 1000000
+
+# ---------------------------------------------------------------------
+# Grup
+# ---------------------------------------------------------------------
+groups:
+  enable_groups: true
+
+# ---------------------------------------------------------------------
+# Spectator
+# ---------------------------------------------------------------------
+spectator:
+  # Spectator bisa bicara ke player biasa.
+  spectator_interaction: false
+  # Spectator bisa bicara ke player yang dipossess-nya.
+  spectator_player_possession: false
+
+# ---------------------------------------------------------------------
+# Force voice chat
+# ---------------------------------------------------------------------
+force_voice_chat: false
+
+# ---------------------------------------------------------------------
+# Noise cancellation (server-side)
+# ---------------------------------------------------------------------
+noise_cancellation:
+  # Aktifkan noise suppression pada PCM sebelum re-broadcast.
+  # Catatan: client SVC juga punya RNNoise sendiri; ini kerja ganda.
+  # Biarkan false jika client sudah pakai NC bawaan (hemat CPU server).
+  enabled: false
+  # Engine. RNNOISE = neural net (berat, kualitas tinggi).
+  engine: RNNOISE
+  # Hanya proses speaker aktif (RMS di atas threshold) untuk hemat CPU.
+  skip_silent_frames: true
+  silent_threshold_db: -50.0
+
+# ---------------------------------------------------------------------
+# Sound physics (raytrace) - Tier 1 (default, murah)
+# ---------------------------------------------------------------------
+sound_physics:
+  # Aktifkan simulasi fisika suara berbasis raytrace.
+  enabled: true
+  # Tier simulasi.
+  # TIER_1 = occlusion gate + modulasi distance (murah, default).
+  # TIER_2 = TIER_1 + PCM DSP bake (low-pass muffle + reverb). Mahal, opt-in.
+  tier: TIER_1
+  # Lakukan raytrace occlusion (apakah tertutup?).
+  raytrace: true
+  # Maksimum block solid yang ditembus sebelum suara tidak terdengar sama sekali.
+  max_occlusion_blocks: 8
+  # Penalti jarak per block solid yang ditembus (block). Mensimulasikan "mendam".
+  occlusion_penalty_per_block: 6.0
+  # Radius probe untuk deteksi ruang tertutup (reverb).
+  reverb_probe_radius: 6
+  # Cache hasil raytrace per pasangan selama N tick (50ms tiap tick).
+  # Naikkan untuk hemat CPU, turunkan untuk akurasi.
+  cache_ticks: 2
+  # Saat TIER_2: cutoff low-pass untuk muffle (Hz). Lebih rendah = lebih mendam.
+  muffle_lowpass_hz: 1200
+  # Saat TIER_2: gain reverb (0.0-1.0).
+  reverb_gain: 0.25
+  # Saat TIER_2: decay reverb (detik).
+  reverb_decay_seconds: 1.2
+  # Listener per world yang mendapat TIER_2 (kosong = semua jika tier=TIER_2).
+  tier2_worlds: []
+  # Bypass physics untuk grup (group chat tetap jernih).
+  bypass_for_groups: true
+
+# ---------------------------------------------------------------------
+# Audio playback (mp3/ogg/wav via command)
+# ---------------------------------------------------------------------
+audio:
+  # Aktifkan fitur playback.
+  enabled: true
+  # Folder file audio (relatif terhadap folder plugin).
+  folder: audio
+  # Format yang didukung.
+  formats: [mp3, ogg, wav]
+  # Volume default playback (0.0-1.0).
+  default_volume: 1.0
+  # Distance default untuk locational playback.
+  default_distance: 32
+  # Maksimum playback concurrent di seluruh server.
+  max_concurrent_playbacks: 64
+  # Kualitas resampler. LOW, MEDIUM, HIGH (HIGH = Lanczos/sinc).
+  resample_quality: HIGH
+  # Normalize peak playback agar tidak clipping.
+  normalize: true
+
+# ---------------------------------------------------------------------
+# Async & performa
+# ---------------------------------------------------------------------
+performance:
+  # Gunakan virtual thread (Java 25+) untuk packet processing & DSP.
+  virtual_threads: true
+  # Ukuran pool DSP (0 = virtual thread unlimited).
+  dsp_pool_size: 0
+  # Ukuran pool Opus decoder/encoder (per thread reuse).
+  opus_pool_size: 32
+  # Drop paket kedaluwarsa (TTL) tanpa proses.
+  drop_expired_packets: true
+  # Log warning overload tiap berapa ms (0 = selalu).
+  overload_log_cooldown_ms: 5000
+
+# ---------------------------------------------------------------------
+# Integrasi
+# ---------------------------------------------------------------------
+integration:
+  placeholderapi:
+    enabled: true
+  # Bridge untuk plugin Denizen (custom event/property).
+  denizen:
+    enabled: true
+  # Bridge untuk Skript (via PublicApi + addon terpisah).
+  skript:
+    enabled: true
+  # Ekspose API publik ke plugin lain.
+  public_api: true
+
+# ---------------------------------------------------------------------
+# Kompatibilitas multi-versi client
+# ---------------------------------------------------------------------
+compatibility:
+  # Versi protokol utama (SVC saat ini = 20).
+  default_compatibility_version: 20
+  # Izinkan adapter versi legacy (true = aktifkan registry per-versi).
+  allow_legacy_adapters: true
+  # Tolak client versi tidak dikenal (false = coba fallback ke default).
+  reject_unknown_version: false
+
+# ---------------------------------------------------------------------
+# Debug
+# ---------------------------------------------------------------------
+debug:
+  enabled: false
+  # Log paket (sangat verbose).
+  log_packets: false
+  # Log timing DSP per frame.
+  log_dsp_timing: false
