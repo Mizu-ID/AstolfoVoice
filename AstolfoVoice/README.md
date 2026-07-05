@@ -113,7 +113,7 @@ Noise gate pada PCM + jalur Tier 2. RNNoise/Speex native = roadmap (lihat batasa
 <table width="100%"><tr>
 <td valign="top">
 
-### ♡ Visual & UX (v0.2.2)
+### Visual & UX (v0.2.2, refined)
 - **Palet pink candy konsisten** lewat `AstolfoStyle` — candy `#FF9ECF`, hot pink
   `#FF5CA8` aksen, blush `#FFB6C1`, lavender `#D8B4E2`, cream, deep rose. Dipakai
   semua command + pesan, bukan `ChatColor` mentah.
@@ -158,12 +158,12 @@ cache. ThreadLocal Opus. TTL drop + bounded `readByteArray`. O(1) lookup address
 ## Build
 ```bash
 ./gradlew :AstolfoVoice:shadowJar
-# -> AstolfoVoice/build/libs/AstolfoVoice-0.2.2.jar
+# -> AstolfoVoice/build/libs/AstolfoVoice-0.2.3.jar
 ```
 Butuh JDK 25 + Gradle 9.6.1 (wrapper disertakan). Build pertama online, lalu `--offline`.
 
 ## Pasang
-1. Drop `AstolfoVoice-0.2.2.jar` ke `plugins/`.
+1. Drop `AstolfoVoice-0.2.3.jar` ke `plugins/`.
 2. Start server -> `config.yml` + folder `audio/` dibuat otomatis.
 3. Client pakai mod Simple Voice Chat biasa. Buka port UDP `24454`.
 
@@ -192,7 +192,8 @@ broadcast + sound physics Tier 1 (difraksi/transmisi/medium air eksponensial/rev
 dynamic range, decode mp3/ogg/wav + streaming playback, location playback per-listener,
 sound-effect preset (PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) + pitch, list audio &
 playlist clickable, **UI pink candy konsisten + sound feedback + tab completion
-context-aware**, playlist, public API + PlaceholderAPI + PrivateChannel, build fat-jar.
+context-aware**, playlist, public API,
+**mute routing (MuteHolder), group sound jernih saat bypass, spectator gate, path-traversal hardening, reload AstolfoConfig beneran, no async kick, per-player cleanup on quit** + PlaceholderAPI + PrivateChannel, build fat-jar.
 
 **Masih kasar / roadmap:**
 - Noise cancellation penuh (RNNoise/Speex native) belum di-bundle — saat ini noise

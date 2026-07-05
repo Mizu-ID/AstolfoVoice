@@ -61,7 +61,7 @@ lebih hidup tanpa bikin client pecah:
 
 | Folder | Versi | Status | Apa ini |
 |--------|-------|--------|---------|
-| [`AstolfoVoice`](AstolfoVoice) | 0.2.2 | **Playable** | Proximity voice chat kompatibel SVC · sound physics raytrace · range dinamis · noise suppression · playback mp3/ogg/wav + preset (PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) · location playback · list clickable · UI pink candy |
+| [`AstolfoVoice`](AstolfoVoice) | 0.2.3 | **Playable** | Proximity voice chat kompatibel SVC · sound physics raytrace · range dinamis · noise suppression · playback mp3/ogg/wav + preset (PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) · location playback · list clickable · UI pink candy |
 
 </td>
 <td width="84" valign="middle" align="center">
@@ -113,13 +113,13 @@ Astolfo/
 **Build fat-jar:**
 ```bash
 ./gradlew :AstolfoVoice:shadowJar
-# → AstolfoVoice/build/libs/AstolfoVoice-0.2.2.jar
+# → AstolfoVoice/build/libs/AstolfoVoice-0.2.3.jar
 ```
 Butuh **JDK 25** + **Gradle 9.6.1** (wrapper disertakan). Build pertama online
 (tarik Paper API + deps dari maven), setelah itu bisa `--offline`.
 
 **Pasang:**
-1. Drop `AstolfoVoice-0.2.2.jar` ke `plugins/`.
+1. Drop `AstolfoVoice-0.2.3.jar` ke `plugins/`.
 2. Start server → `config.yml` + folder `audio/` dibuat otomatis.
 3. Client pakai mod Simple Voice Chat biasa. Buka port UDP `24454`.
 
