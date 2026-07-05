@@ -1,15 +1,20 @@
-# AstolfoVoice
+<table width="100%"><tr>
+<td width="86" valign="middle" align="center">
+  <img src="../astolfo.png" alt="Astolfo" width="72" style="border-radius:12px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 14px rgba(255,92,168,.30);" />
+</td>
+<td valign="middle">
 
-<p align="left">
-  <img src="../astolfo.png" alt="Astolfo" width="72" align="left" style="border-radius:12px; margin-right:12px; box-shadow:0 0 0 2px #ffb6c1, 0 4px 14px rgba(255,92,168,.30);" />
-</p>
+# <span style="color:#ff5ca8">AstolfoVoice</span>
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-ff5ca8?style=flat-square&logo=gnu)](../LICENSE)
 [![Release](https://img.shields.io/github/v/release/Mizu-ID/Astolfo?include_prereleases&style=flat-square&color=ff9ecf&label=✨%20release)](https://github.com/Mizu-ID/Astolfo/releases)
 [![Paper](https://img.shields.io/badge/Paper-1.21%2B-00B2FF?style=flat-square&logo=papermc)](https://papermc.io)
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk)](https://openjdk.org)
 
-<br clear="left" />
+</td>
+</tr></table>
+
+&nbsp;
 
 **Proximity voice chat** untuk Paper/Spigot/Bukkit, **kompatibel protokol** dengan
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat). Client SVC biasa
@@ -21,7 +26,7 @@ sisi transport (UDP `24454` + plugin channel `voicechat:*`, AES-128-GCM, Opus 48
 > generik. Command punya tab completion context-aware (file audio, playlist, world,
 > preset, player). Preset baru KAWAII + LOFI. Bell feedback saat command sukses.
 
----
+&nbsp;
 
 ## ✿ Fitur
 
@@ -34,6 +39,11 @@ sisi transport (UDP `24454` + plugin channel `voicechat:*`, AES-128-GCM, Opus 48
 - Roster client (`PlayerStatesPacket`/`PlayerStatePacket`/`RemovePlayerStatePacket`)
   di-broadcast saat connect/quit.
 - Negosiasi `compatibilityVersion` per koneksi; default 20 (target Paper 1.21+).
+
+&nbsp;
+
+<table width="100%"><tr>
+<td valign="top">
 
 ### Sound physics (server-side, raytrace Paper API)
 Model gelombang suara, bukan gate keras:
@@ -55,6 +65,20 @@ jauh. `/av voicerange <player> [range]` + API override. Shout dibatasi permissio
 ### Noise cancellation (server-side, opt-in)
 Noise gate pada PCM + jalur Tier 2. RNNoise/Speex native = roadmap (lihat batasan).
 
+</td>
+<td width="58" valign="middle" align="center">
+  <img src="../astolfo.png" alt="✿" width="40" style="border-radius:10px; box-shadow:0 0 0 2px #ffd6e7; opacity:.9;" />
+</td>
+</tr></table>
+
+&nbsp;
+
+<table width="100%"><tr>
+<td width="58" valign="middle" align="center">
+  <img src="../astolfo2.png" alt="♡" width="48" style="border-radius:10px; box-shadow:0 0 0 2px #ffd6e7; opacity:.9;" />
+</td>
+<td valign="top">
+
 ### Playback audio (`/astolfo play`)
 - Format: **mp3** (JLayer), **ogg/vorbis** (JOrbis, pure-Java — tanpa SPI), **wav**
   (javax.sound). Resample ke 48k (Lanczos HIGH).
@@ -73,11 +97,21 @@ Noise gate pada PCM + jalur Tier 2. RNNoise/Speex native = roadmap (lihat batasa
 - Folder audio otomatis dibuat di `plugins/AstolfoVoice/audio/`.
 - Playlist persisten (`playlist.yml`): create/add/remove/play/shuffle/list/delete.
 
+</td>
+</tr></table>
+
+&nbsp;
+
 ### List clickable
 - `/av list` menampilkan file audio sebagai teks yang bisa diklik — klik nama file
   -> otomatis `/av play <file> all`.
 - `/av playlist list` idem — klik playlist -> putar playlist, klik file -> putar file.
 - Console fallback ke plain text.
+
+&nbsp;
+
+<table width="100%"><tr>
+<td valign="top">
 
 ### ♡ Visual & UX (v0.2.2)
 - **Palet pink candy konsisten** lewat `AstolfoStyle` — candy `#FF9ECF`, hot pink
@@ -107,7 +141,13 @@ Async penuh, virtual threads (Java 25): UDP reader -> bounded queue -> virtual t
 per paket. Raytrace main-thread (aman di Bukkit), di-cache per tick, DSP worker baca
 cache. ThreadLocal Opus. TTL drop + bounded `readByteArray`. O(1) lookup address->UUID.
 
----
+</td>
+<td width="44" valign="middle" align="center">
+  <img src="../astolfo.png" alt="✿" width="36" style="border-radius:9px; box-shadow:0 0 0 2px #ffd6e7; opacity:.9;" />
+</td>
+</tr></table>
+
+&nbsp;
 
 ## Target platform
 - **Paper 1.21+** — fitur penuh (raytrace `World#rayTraceBlocks`, Adventure
@@ -144,6 +184,8 @@ playlist create|add|remove|play|list|delete|shuffle ...
 Preset: NONE PHONE RADIO MEGA CAVE KAWAII LOFI  ·  pitch=1.0 normal
 ```
 
+&nbsp;
+
 ## Status & batasan (v0.2.2 — jujur)
 **Sudah solid:** transport UDP + handshake byte-exact, roster client, proximity
 broadcast + sound physics Tier 1 (difraksi/transmisi/medium air eksponensial/reverb),
@@ -170,5 +212,9 @@ context-aware**, playlist, public API + PlaceholderAPI + PrivateChannel, build f
 GPL-3.0 — lihat [LICENSE](../LICENSE). Mengikuti
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat) (henkelmax);
 protokol direimplementasi bersih.
+
+<p align="right">
+  <img src="../astolfo2.png" alt="♡" width="150" style="border-radius:16px; box-shadow:0 0 0 3px #ffb6c1, 0 8px 22px rgba(255,92,168,.30);" />
+</p>
 
 <p align="center"><sub style="color:#d8b4e2">made with ♡ · stay soft</sub></p>
