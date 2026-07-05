@@ -9,6 +9,7 @@ import id.astolfo.voicechat.api.PrivateChannelOptions;
 import id.astolfo.voicechat.api.VoiceStatus;
 import id.astolfo.voicechat.audio.AudioEngine;
 import id.astolfo.voicechat.voice.common.PlayerState;
+import id.astolfo.voicechat.voice.server.AstolfoOverride;
 import id.astolfo.voicechat.voice.server.GroupManager;
 import id.astolfo.voicechat.voice.server.PlayerStateManager;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
@@ -16,6 +17,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,7 +34,6 @@ public final class AstolfoApiImpl implements AstolfoApi {
     private final double defaultRange;
     private final AudioEngine audioEngine;
 
-    private final ConcurrentHashMap<UUID, Double> voiceRangeOverrides = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Boolean> muted = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, PrivateChannelImpl> privateChannels = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<AstolfoListener> listeners = new CopyOnWriteArrayList<>();
@@ -45,23 +46,23 @@ public final class AstolfoApiImpl implements AstolfoApi {
         this.audioEngine = audioEngine;
     }
 
-    // ---- Voice range ----
+    // ---- Voice range (persist ke AstolfoOverride agar ProximityResolver baca) ----
     @Override
     public void setVoiceRange(UUID player, double range) {
         double old = getVoiceRange(player);
-        voiceRangeOverrides.put(player, range);
+        AstolfoOverride.set(player, range);
         for (AstolfoListener l : listeners) l.onPlayerVoiceRangeChanged(player, old, range);
     }
 
     @Override
     public double getVoiceRange(UUID player) {
-        Double override = voiceRangeOverrides.get(player);
-        return override != null ? override : defaultRange;
+        double ov = AstolfoOverride.get(player);
+        return ov > 0 ? ov : defaultRange;
     }
 
     @Override
     public void resetPlayer(UUID player) {
-        voiceRangeOverrides.remove(player);
+        AstolfoOverride.remove(player);
         muted.remove(player);
     }
 
@@ -103,7 +104,7 @@ public final class AstolfoApiImpl implements AstolfoApi {
 
     @Override
     public PlaybackHandle playAtLocation(String world, double x, double y, double z, String file, PlaybackOptions options) {
-        // LocationSoundPacket playback = Fase 2 lanjutan; sementara broadcast ke world (static).
+        // LocationSoundPacket playback penuh = lanjutan; sementara broadcast ke world (static).
         return broadcastWorld(world, file, options);
     }
 
@@ -113,7 +114,7 @@ public final class AstolfoApiImpl implements AstolfoApi {
         GroupManager.Group g = server.getGroupManager().getGroupByName(group);
         if (g == null) return null;
         List<UUID> members = server.getGroupManager().getMembers(g.id);
-        List<Player> targets = new java.util.ArrayList<>();
+        List<Player> targets = new ArrayList<>();
         for (UUID m : members) {
             Player p = Bukkit.getPlayer(m);
             if (p != null) targets.add(p);

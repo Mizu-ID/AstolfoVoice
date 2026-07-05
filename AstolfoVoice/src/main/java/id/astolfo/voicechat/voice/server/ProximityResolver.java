@@ -1,170 +1,173 @@
 package id.astolfo.voicechat.voice.server;
 
+import id.astolfo.voicechat.audio.DspProcessor;
+import id.astolfo.voicechat.audio.OpusManager;
 import id.astolfo.voicechat.config.AstolfoConfig;
+import id.astolfo.voicechat.physics.SoundPhysicsEngine;
+import id.astolfo.voicechat.voice.common.AudioUtils;
 import id.astolfo.voicechat.voice.common.MicPacket;
 import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.World;
-import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
-import org.bukkit.util.RayTraceResult;
-import org.bukkit.util.Vector;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ProximityResolver — tentukan siapa mendengar mic packet + terapkan sound physics.
- * Tier 1 (default): occlusion gate (raytrace) + modulasi distance (muffle).
- * Pertanyaan user dipetakan:
- *   - apakah tertutup?  → occlusion (ray solid)
- *   - apakah terdengar?  → audibility gate (distance + occlusion)
- *   - apakah mendam?     → muffle: distance += occlusion*penalty
- *   - apakah bergema?    → enclosed probe → +reverb_penalty (Tier1 simulasi)
- *   - apakah jelas?      → line of sight (los)
+ * ProximityResolver — routing mic packet + sound physics advanced + Tier 2 DSP.
  *
- * Raytrace resmi main-thread di Bukkit; cache pre-compute via tick task (Fase 3).
- * Untuk MVP, raytrace dijalankan async atas world snapshot baca (Paper mengizinkan
- * untuk posisi/blok baca di banyak kasus). Flag async_raytrace mengontrol ini.
+ * Tier 1 (default): SoundPath → modulasi distance + whisper flag (murah, client attenuate).
+ * Tier 2 (opt-in per world): decode opus → DspProcessor (lowpass muffle + reverb + gate)
+ *   → re-encode → kirim. Mahal (CPU + latency) tapi "bergema/mendam beneran".
+ *
+ * Dynamic range RMS (bisik→teriak) lewat decode opus + LoudnessMeter.
  */
 public final class ProximityResolver {
 
     private final AstolfoConfig config;
     private final GroupManager groupManager;
+    private final SoundPhysicsEngine physics;
+    private final OpusManager opus;
+    // Tier2 DSP state per pasangan (sender,listener) — biar reverb/lowpass kontinu.
+    private final ConcurrentHashMap<String, DspProcessor> dspStates = new ConcurrentHashMap<>();
 
-    public ProximityResolver(AstolfoConfig config, GroupManager groupManager) {
+    public ProximityResolver(AstolfoConfig config, GroupManager groupManager, OpusManager opus) {
         this.config = config;
         this.groupManager = groupManager;
+        this.opus = opus;
+        this.physics = new SoundPhysicsEngine(config);
     }
 
     public void processMic(Player sender, MicPacket mic, ServerVoiceEvents server, long timestamp) {
-        boolean whispering = mic.isWhispering();
         UUID senderUuid = sender.getUniqueId();
 
-        // Group sound: bila sender dalam grup, kirim ke anggota grup (bypass physics bila config).
+        // Dynamic range: decode opus → RMS dB → t.
+        double loudnessDb = -128;
+        boolean hasDecoded = false;
+        short[] decodedPcm = null;
+        if (config.dynamicRangeEnabled() && opus != null) {
+            decodedPcm = opus.decode(mic.getOpusData());
+            if (decodedPcm != null) {
+                loudnessDb = AudioUtils.getRmsAudioLevel(decodedPcm);
+                hasDecoded = true;
+            }
+        }
+        DynamicRange dr = computeDynamicRange(loudnessDb, mic.isWhispering(), hasDecoded, sender);
+
+        // Group sound
         UUID groupId = groupManager.getGroupOf(senderUuid);
         if (groupId != null) {
-            java.util.List<UUID> members = groupManager.getMembers(groupId);
+            List<UUID> members = groupManager.getMembers(groupId);
             for (UUID member : members) {
                 if (member.equals(senderUuid)) continue;
                 Player listener = org.bukkit.Bukkit.getPlayer(member);
                 if (listener == null) continue;
-                float distance = config.bypassPhysicsForGroups() ? (float) config.voiceRange() : computeDistance(sender, listener, whispering);
-                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), whispering, distance, null);
+                float distance = config.bypassPhysicsForGroups() ? (float) config.voiceRange() : dr.range;
+                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, distance, null);
             }
             return;
         }
 
-        // Proximity: kirim ke player dalam broadcast_range yang same-world.
-        double baseRange = whispering ? config.whisperRange() : config.voiceRange();
-        double broadcastRange = config.broadcastRange() < 0 ? baseRange + 1 : config.broadcastRange();
-        // broadcast minimal shout_range supaya teriak tetap terjangkau
-        broadcastRange = Math.max(broadcastRange, config.shoutRange());
-
         Location senderLoc = sender.getEyeLocation();
-        World world = senderLoc.getWorld();
-        if (world == null) return;
+        if (senderLoc.getWorld() == null) return;
 
-        for (Player listener : world.getPlayers()) {
+        boolean tier2 = isTier2(senderLoc.getWorld().getName());
+        double broadcastRange = config.broadcastRange() < 0 ? dr.range + 1 : config.broadcastRange();
+        broadcastRange = Math.max(broadcastRange, config.shoutRange() + 8);
+
+        for (Player listener : senderLoc.getWorld().getPlayers()) {
             if (listener.getUniqueId().equals(senderUuid)) continue;
             if (!server.isCompatible(listener)) continue;
             Location listenerLoc = listener.getEyeLocation();
             double dist = senderLoc.distance(listenerLoc);
             if (dist > broadcastRange) continue;
 
-            // Dynamic range: tentukan distance efektif (Tier 1: pakai whisper flag + base).
-            // Dynamic RMS → distance akan di-hook di Fase 3 setelah decode opus tersedia.
-            float effectiveDistance = (float) baseRange;
-            boolean effectiveWhisper = whispering;
+            float effectiveDistance = (float) dr.range;
+            boolean effectiveWhisper = dr.whisper;
+            byte[] opusToSend = mic.getOpusData();
 
-            // Sound physics Tier 1
             if (config.soundPhysicsEnabled() && config.raytraceEnabled()) {
-                OcclusionResult occ = computeOcclusion(senderLoc, listenerLoc, world);
-                if (!occ.audible(config.maxOcclusionBlocks(), effectiveDistance)) {
-                    continue; // tidak terdengar → skip kirim (hemat bandwidth)
+                SoundPhysicsEngine.SoundPath path = physics.compute(senderLoc, listenerLoc, dist, senderLoc.getWorld());
+                if (!path.audible) continue;
+                effectiveDistance += path.distanceBias;
+                if (path.gain > 0f && path.gain < 1f) {
+                    effectiveDistance += (float) (dist * (1.0 / path.gain - 1.0) * 0.5);
                 }
-                // muffle: tambah penalti per block solid
-                effectiveDistance += occ.occlusionCount * (float) config.occlusionPenaltyPerBlock();
-                // bergema (enclosed) → penalti kecil
-                if (occ.enclosed) {
-                    effectiveDistance += (float) config.reverbPenalty();
+                if (path.muffled && effectiveDistance > dr.range) {
+                    effectiveWhisper = effectiveWhisper || path.lowpassHz < 1200f;
                 }
-            }
-            server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), effectiveWhisper, effectiveDistance, null);
-        }
-    }
 
-    private float computeDistance(Player sender, Player listener, boolean whispering) {
-        return (float) (whispering ? config.whisperRange() : config.voiceRange());
-    }
-
-    /** Hasil probe occlusion + line-of-sight + enclosed. */
-    private static final class OcclusionResult {
-        final int occlusionCount;
-        final boolean lineOfSight;
-        final boolean enclosed;
-
-        OcclusionResult(int occlusionCount, boolean lineOfSight, boolean enclosed) {
-            this.occlusionCount = occlusionCount;
-            this.lineOfSight = lineOfSight;
-            this.enclosed = enclosed;
-        }
-
-        boolean audible(int maxOcclusion, double effectiveDistance) {
-            // audible jika LOS jelas ATAU occlusion masih dalam batas
-            return lineOfSight || occlusionCount <= maxOcclusion;
-        }
-    }
-
-    private OcclusionResult computeOcclusion(Location from, Location to, World world) {
-        Vector start = from.toVector();
-        Vector end = to.toVector();
-        Vector dir = end.clone().subtract(start);
-        double maxDist = dir.length();
-        if (maxDist < 1e-3) {
-            return new OcclusionResult(0, true, false);
-        }
-        dir.normalize();
-
-        // Line of sight via raytrace API
-        RayTraceResult result = world.rayTraceBlocks(from, dir, maxDist,
-                org.bukkit.FluidCollisionMode.NEVER, true);
-        boolean los = result == null || result.getHitBlock() == null;
-
-        // Occlusion tebal: hitung block solid sepanjang ray (step 1 block)
-        int occlusionCount = 0;
-        Vector step = dir.clone().multiply(1.0);
-        Vector cursor = start.clone();
-        double traveled = 0;
-        int maxBlocks = config.maxOcclusionBlocks() + 2;
-        while (traveled < maxDist && occlusionCount < maxBlocks) {
-            cursor.add(step);
-            traveled += 1.0;
-            Block b = world.getBlockAt(cursor.getBlockX(), cursor.getBlockY(), cursor.getBlockZ());
-            Material type = b.getType();
-            if (type.isOccluding() && type.isSolid()) {
-                occlusionCount++;
-            }
-        }
-
-        // Enclosed probe: density block solid dalam box ±radius sekitar listener
-        boolean enclosed = false;
-        int r = config.reverbProbeRadius();
-        if (r > 0) {
-            int lx = to.getBlockX(), ly = to.getBlockY(), lz = to.getBlockZ();
-            int solid = 0, total = 0;
-            for (int x = -r; x <= r; x++) {
-                for (int y = -r; y <= r; y++) {
-                    for (int z = -r; z <= r; z++) {
-                        total++;
-                        Material m = world.getBlockAt(lx + x, ly + y, lz + z).getType();
-                        if (m.isOccluding() && m.isSolid()) solid++;
+                // Tier 2: bake DSP bila ada efek signifikan.
+                if (tier2 && hasDecoded && decodedPcm != null
+                        && (path.lowpassHz < AudioUtils.SAMPLE_RATE / 2f || path.reverb > 0f || path.muffled)) {
+                    short[] baked = decodedPcm.clone();
+                    String key = senderUuid + ">" + listener.getUniqueId();
+                    DspProcessor dsp = dspStates.computeIfAbsent(key, k -> new DspProcessor());
+                    float cutoff = path.lowpassHz < AudioUtils.SAMPLE_RATE / 2f ? path.lowpassHz : 0f;
+                    float reverb = path.reverb;
+                    boolean gate = config.noiseCancellationEnabled() && config.noiseSkipSilentFrames();
+                    float gateDb = (float) config.noiseSilentThresholdDb();
+                    dsp.process(baked, cutoff, reverb, gate, gateDb);
+                    byte[] reencoded = opus.encode(baked);
+                    if (reencoded != null && reencoded.length > 0) {
+                        opusToSend = reencoded;
                     }
                 }
             }
-            enclosed = ((double) solid / total) > 0.45;
+            server.sendPlayerSound(listener, senderUuid, opusToSend, effectiveWhisper, effectiveDistance, null);
         }
-
-        return new OcclusionResult(occlusionCount, los, enclosed);
     }
+
+    private boolean isTier2(String world) {
+        if (!"TIER_2".equalsIgnoreCase(config.soundPhysicsTier())) return false;
+        List<String> worlds = config.tier2Worlds();
+        return worlds == null || worlds.isEmpty() || worlds.contains(world);
+    }
+
+    public void clearDspFor(UUID player) {
+        dspStates.entrySet().removeIf(e -> e.getKey().startsWith(player + ">") || e.getKey().endsWith(">" + player));
+    }
+
+    private static final class DynamicRange {
+        final float range;
+        final boolean whisper;
+        DynamicRange(float range, boolean whisper) {
+            this.range = range;
+            this.whisper = whisper;
+        }
+    }
+
+    private DynamicRange computeDynamicRange(double loudnessDb, boolean micWhisper, boolean hasDecoded, Player sender) {
+        double baseRange = config.voiceRange();
+        if (!config.dynamicRangeEnabled() || !hasDecoded) {
+            double r = micWhisper ? config.whisperRange() : baseRange;
+            return new DynamicRange((float) r, micWhisper);
+        }
+        if (loudnessDb <= config.noiseSilentThresholdDb()) {
+            return new DynamicRange((float) config.whisperRange(), true);
+        }
+        double t = (loudnessDb - config.loudnessWhisperDb()) / (config.loudnessShoutDb() - config.loudnessWhisperDb());
+        t = clamp(t, 0, 1);
+        double range;
+        boolean whisper;
+        if (t < 0.5) {
+            double u = t * 2.0;
+            range = lerp(config.whisperRange(), baseRange, u);
+            whisper = u < config.whisperIconThresholdFactor() / 2.0
+                    || range < config.whisperRange() * config.whisperIconThresholdFactor();
+        } else {
+            double u = (t - 0.5) * 2.0;
+            boolean canShout = sender.hasPermission(config.shoutPermission());
+            range = canShout ? lerp(baseRange, config.shoutRange(), u) : baseRange;
+            whisper = false;
+        }
+        double override = AstolfoOverride.get(sender.getUniqueId());
+        if (override > 0) {
+            range = Math.min(range, override);
+        }
+        return new DynamicRange((float) range, whisper);
+    }
+
+    private static double lerp(double a, double b, double t) { return a + (b - a) * t; }
+    private static double clamp(double v, double lo, double hi) { return Math.max(lo, Math.min(hi, v)); }
 }

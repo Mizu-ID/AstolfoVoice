@@ -11,22 +11,28 @@ softdepend:
   - denizen
   - Skript
 commands:
-  astolfo:
+  astolfovoice:
     description: Perintah utama AstolfoVoice
     usage: |
-      /astolfo play player <player> <file>
-      /astolfo play world <world> <file>
-      /astolfo play all <file>
-      /astolfo play location <world> <x> <y> <z> <file> [distance]
-      /astolfo play group <group> <file>
-      /astolfo stop [player|world|all|id]
-      /astolfo list
-      /astolfo voicerange <player> [range]
-      /astolfo broadcast <player|world|all> <file>
-      /astolfo status [player]
-      /astolfo reset <player>
-      /astolfo reload
-    aliases: [av, astolfovoice]
+      /astolfovoice play <file> player <player1> <player2> ...
+      /astolfovoice play <file> world <world>
+      /astolfovoice play <file> all
+      /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume]
+      /astolfovoice play <file> group <group>
+      /astolfovoice stop [all | player <player> | id <id>]
+      /astolfovoice list
+      /astolfovoice voicerange <player> [range]
+      /astolfovoice status [player]
+      /astolfovoice reset <player>
+      /astolfovoice reload
+      /astolfovoice playlist create <name>
+      /astolfovoice playlist add <name> <file> [file ...]
+      /astolfovoice playlist remove <name> <file>
+      /astolfovoice playlist play <name> [player <p1> <p2> ... | world <w> | all] [shuffle]
+      /astolfovoice playlist list [name]
+      /astolfovoice playlist delete <name>
+      /astolfovoice playlist shuffle <name>
+    aliases: [asv, av, astolfo]
     permission: astolfo.command
     permission-message: Kamu tidak punya izin untuk perintah ini.
 permissions:
@@ -39,23 +45,23 @@ permissions:
       astolfo.play: true
       astolfo.stop: true
       astolfo.voicerange: true
-      astolfo.broadcast: true
       astolfo.status: true
       astolfo.reset: true
       astolfo.reload: true
+      astolfo.playlist: true
   astolfo.play:
     default: op
   astolfo.stop:
     default: op
   astolfo.voicerange:
     default: op
-  astolfo.broadcast:
-    default: op
   astolfo.status:
     default: true
   astolfo.reset:
     default: op
   astolfo.reload:
+    default: op
+  astolfo.playlist:
     default: op
   astolfo.shout:
     default: true

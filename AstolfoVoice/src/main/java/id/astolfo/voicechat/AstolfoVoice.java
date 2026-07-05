@@ -3,11 +3,14 @@ package id.astolfo.voicechat;
 import id.astolfo.voicechat.api.AstolfoApi;
 import id.astolfo.voicechat.api.impl.AstolfoApiImpl;
 import id.astolfo.voicechat.audio.AudioEngine;
+import id.astolfo.voicechat.audio.OpusManager;
+import id.astolfo.voicechat.audio.PlaylistManager;
 import id.astolfo.voicechat.compat.PaperCompatibility;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.integration.AstolfoExpansion;
 import id.astolfo.voicechat.net.NetManager;
 import id.astolfo.voicechat.net.PacketRateLimiter;
+import id.astolfo.voicechat.voice.common.Codec;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import id.astolfo.voicechat.voice.server.VoiceServer;
 import org.bukkit.Bukkit;
@@ -42,6 +45,8 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     private ServerVoiceEvents voiceEvents;
     private AstolfoApiImpl api;
     private AudioEngine audioEngine;
+    private PlaylistManager playlists;
+    private OpusManager opusManager;
 
     @Override
     public void onEnable() {
@@ -74,46 +79,56 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
             }
         }
 
-        // 3. Compatibility
+        // 3. Shared Opus manager (dipakai proximity dynamic range + playback)
+        Codec codec;
+        try {
+            codec = Codec.valueOf(config.codecName());
+        } catch (IllegalArgumentException e) {
+            codec = Codec.VOIP;
+        }
+        this.opusManager = new OpusManager(codec, config.opusBitrate());
+
+        // 4. Compatibility
         PaperCompatibility compat = new PaperCompatibility(this, player -> voiceEvents != null && voiceEvents.isCompatible(player));
 
-        // 4. NetManager
+        // 5. NetManager
         PacketRateLimiter rateLimiter = new PacketRateLimiter(config.tcpRateLimit());
         this.netManager = new NetManager(this, compat, rateLimiter);
         netManager.onEnable();
 
-        // 5. Voice server (UDP)
+        // 6. Voice server (UDP)
         this.voiceServer = new VoiceServer(getLogger(), config.port(), config.bindAddress(), null,
                 config.virtualThreads(), config.dspQueueCapacity());
 
-        // 6. Server events (handshake)
-        this.voiceEvents = new ServerVoiceEvents(getLogger(), config, voiceServer, netManager);
+        // 7. Server events (handshake) + proximity pakai opusManager
+        this.voiceEvents = new ServerVoiceEvents(getLogger(), config, voiceServer, netManager, opusManager);
         voiceServer.setHandler(voiceEvents);
 
-        // 7. Audio engine (Fase 2)
+        // 8. Audio engine + playlists
         if (config.audioEnabled()) {
-            this.audioEngine = new AudioEngine(config, voiceEvents, audioDir);
+            this.audioEngine = new AudioEngine(config, voiceEvents, audioDir, opusManager);
         }
+        this.playlists = new PlaylistManager(new File(getDataFolder(), "playlist.yml"));
 
-        // 8. Register listeners
+        // 9. Register listeners
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        // 9. Register service (public API)
+        // 10. Register service (public API)
         this.api = new AstolfoApiImpl(voiceEvents, audioDir, config.voiceRange(), audioEngine);
         getServer().getServicesManager().register(AstolfoApi.class, api, this, ServicePriority.Normal);
 
-        // 10. Command
-        AstolfoCommand cmd = new AstolfoCommand(this, voiceEvents, config, audioEngine);
+        // 11. Command
+        AstolfoCommand cmd = new AstolfoCommand(this, voiceEvents, config, audioEngine, playlists);
         try {
-            if (getCommand("astolfo") != null) {
-                getCommand("astolfo").setExecutor(cmd);
-                getCommand("astolfo").setTabCompleter(cmd);
+            if (getCommand("astolfovoice") != null) {
+                getCommand("astolfovoice").setExecutor(cmd);
+                getCommand("astolfovoice").setTabCompleter(cmd);
             }
         } catch (Exception e) {
             getLogger().log(Level.WARNING, "Failed to register command", e);
         }
 
-        // 11. Soft-hook PlaceholderAPI
+        // 12. Soft-hook PlaceholderAPI
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             try {
                 new AstolfoExpansion(this, api).register();
@@ -175,23 +190,11 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     }
 
     // ---- Accessors ----
-    public AstolfoConfig getAstolfoConfig() {
-        return config;
-    }
-
-    public ServerVoiceEvents getVoiceEvents() {
-        return voiceEvents;
-    }
-
-    public NetManager getNetManager() {
-        return netManager;
-    }
-
-    public AstolfoApiImpl getApi() {
-        return api;
-    }
-
-    public AudioEngine getAudioEngine() {
-        return audioEngine;
-    }
+    public AstolfoConfig getAstolfoConfig() { return config; }
+    public ServerVoiceEvents getVoiceEvents() { return voiceEvents; }
+    public NetManager getNetManager() { return netManager; }
+    public AstolfoApiImpl getApi() { return api; }
+    public AudioEngine getAudioEngine() { return audioEngine; }
+    public PlaylistManager getPlaylists() { return playlists; }
+    public OpusManager getOpusManager() { return opusManager; }
 }

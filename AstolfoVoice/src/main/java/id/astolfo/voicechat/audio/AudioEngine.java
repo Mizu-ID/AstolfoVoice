@@ -5,22 +5,18 @@ import id.astolfo.voicechat.api.PlaybackOptions;
 import id.astolfo.voicechat.api.impl.PlaybackHandleImpl;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.voice.common.ClientConnection;
-import id.astolfo.voicechat.voice.common.Codec;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.io.File;
 import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * AudioEngine — orkestrasi decode + resample + streaming playback.
- * Memakai OpusManager (ThreadLocal) + AudioDecoder + Resampler + StreamingAudioPlayer.
- * Membatasi jumlah playback concurrent (config.max_concurrent_playbacks).
+ * OpusManager (shared, ThreadLocal) + AudioDecoder + Resampler + StreamingAudioPlayer.
  */
 public final class AudioEngine {
 
@@ -32,21 +28,14 @@ public final class AudioEngine {
     private final AtomicInteger activePlaybacks = new AtomicInteger(0);
     private final CopyOnWriteArrayList<PlaybackHandleImpl> handles = new CopyOnWriteArrayList<>();
 
-    public AudioEngine(AstolfoConfig config, ServerVoiceEvents server, File audioDir) {
+    public AudioEngine(AstolfoConfig config, ServerVoiceEvents server, File audioDir, OpusManager sharedOpus) {
         this.config = config;
-        Codec codec;
-        try {
-            codec = Codec.valueOf(config.codecName());
-        } catch (IllegalArgumentException e) {
-            codec = Codec.VOIP;
-        }
-        this.opus = new OpusManager(codec, config.opusBitrate());
+        this.opus = sharedOpus;
         this.server = server;
         this.audioDir = audioDir;
         this.streamer = new StreamingAudioPlayer(opus, server.getVoiceServer(), server.getConnections());
     }
 
-    /** Resolve file audio (case-insensitive, boleh tanpa ekstensi). */
     public File resolveFile(String name) {
         if (name == null) return null;
         File direct = new File(audioDir, name);
@@ -68,18 +57,13 @@ public final class AudioEngine {
         return null;
     }
 
-    /** Play ke daftar target. Return handle, atau null bila file tidak ada / kuota penuh. */
     public PlaybackHandle playToTargets(List<Player> targets, String file, PlaybackOptions options) {
         if (targets.isEmpty()) return null;
         File resolved = resolveFile(file);
         if (resolved == null) return null;
         if (activePlaybacks.get() >= config.maxConcurrentPlaybacks()) return null;
         try {
-            AudioDecoder.Decoded decoded = AudioDecoder.decode(resolved);
-            short[] pcm48 = Resampler.toTargetRate(decoded.samples, decoded.sampleRate, config.resampleQuality());
-            if (config.audioNormalize()) {
-                pcm48 = Resampler.normalize(pcm48);
-            }
+            short[] pcm48 = decodeTo48k(resolved);
             activePlaybacks.incrementAndGet();
             PlaybackHandleImpl handle = streamer.play(targets, pcm48, options, resolved.getName(), null);
             handles.add(handle);
@@ -90,11 +74,56 @@ public final class AudioEngine {
         }
     }
 
+    private short[] decodeTo48k(File resolved) throws Exception {
+        AudioDecoder.Decoded decoded = AudioDecoder.decode(resolved);
+        short[] pcm48 = Resampler.toTargetRate(decoded.samples, decoded.sampleRate, config.resampleQuality());
+        if (config.audioNormalize()) {
+            pcm48 = Resampler.normalize(pcm48);
+        }
+        return pcm48;
+    }
+
+    /**
+     * Putar antrian file berurutan ke target (playlist). Mengembalikan handle
+     * representatif; berhenti membatalkan seluruh antrian tersisa.
+     */
+    public PlaybackHandle playQueue(List<Player> targets, List<String> files, PlaybackOptions options, boolean loop) {
+        if (targets.isEmpty() || files.isEmpty()) return null;
+        PlaybackHandleImpl handle = new PlaybackHandleImpl("queue:" + files.size());
+        Thread.ofVirtual().name("astolfo-queue", 0).start(() -> {
+            do {
+                for (String file : files) {
+                    if (!handle.isRunning()) break;
+                    File resolved = resolveFile(file);
+                    if (resolved == null) continue;
+                    if (activePlaybacks.get() >= config.maxConcurrentPlaybacks()) {
+                        try { Thread.sleep(100); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                        continue;
+                    }
+                    try {
+                        short[] pcm48 = decodeTo48k(resolved);
+                        activePlaybacks.incrementAndGet();
+                        PlaybackHandleImpl part = streamer.play(targets, pcm48, options, resolved.getName(), null);
+                        while (part.isRunning()) {
+                            if (!handle.isRunning()) { part.stop(); break; }
+                            try { Thread.sleep(20); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); handle.markStopped(); break; }
+                        }
+                        activePlaybacks.decrementAndGet();
+                    } catch (Exception e) {
+                        Bukkit.getLogger().warning("[Astolfo] Queue decode failed for " + file + ": " + e.getMessage());
+                    }
+                }
+            } while (loop && handle.isRunning());
+            handle.markStopped();
+        });
+        handles.add(handle);
+        return handle;
+    }
+
     public void stop(PlaybackHandle handle) {
         if (handle instanceof PlaybackHandleImpl impl) {
             impl.stop();
             handles.remove(impl);
-            activePlaybacks.decrementAndGet();
         }
     }
 
@@ -108,5 +137,13 @@ public final class AudioEngine {
 
     public int activeCount() {
         return activePlaybacks.get();
+    }
+
+    public File getAudioDir() {
+        return audioDir;
+    }
+
+    public OpusManager getOpus() {
+        return opus;
     }
 }

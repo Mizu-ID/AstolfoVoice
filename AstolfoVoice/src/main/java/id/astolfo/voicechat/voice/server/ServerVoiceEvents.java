@@ -1,5 +1,6 @@
 package id.astolfo.voicechat.voice.server;
 
+import id.astolfo.voicechat.audio.OpusManager;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.net.AddGroupPacket;
 import id.astolfo.voicechat.net.JoinedGroupPacket;
@@ -67,7 +68,7 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
     private final AtomicLong seq = new AtomicLong(0);
     private volatile boolean running = false;
 
-    public ServerVoiceEvents(Logger logger, AstolfoConfig config, VoiceServer voiceServer, NetManager netManager) {
+    public ServerVoiceEvents(Logger logger, AstolfoConfig config, VoiceServer voiceServer, NetManager netManager, OpusManager opus) {
         this.logger = logger;
         this.config = config;
         this.voiceServer = voiceServer;
@@ -76,7 +77,7 @@ public final class ServerVoiceEvents implements NetManager.Compatibility.Channel
         this.groupManager = new GroupManager();
         this.categoryManager = new CategoryManager();
         this.pingManager = new PingManager();
-        this.proximityResolver = new ProximityResolver(config, groupManager);
+        this.proximityResolver = new ProximityResolver(config, groupManager, opus);
     }
 
     // ---- Lifecycle ----
