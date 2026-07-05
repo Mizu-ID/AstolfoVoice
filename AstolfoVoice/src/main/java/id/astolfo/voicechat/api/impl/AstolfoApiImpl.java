@@ -15,6 +15,8 @@ import id.astolfo.voicechat.voice.server.PlayerStateManager;
 import id.astolfo.voicechat.voice.server.PrivateChannelRegistry;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.io.File;
@@ -25,7 +27,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * AstolfoApiImpl — implementasi API publik. Di-register via ServicesManager.
+ * AstolfoApiImpl - implementasi API publik. Di-register via ServicesManager.
+ *
+ * v0.2.1: playAtLocation sekarang playback LOCATIONAL beneran (LocationSoundPacket),
+ * bukan broadcast world. Anggota world yang jadi listener, attenuasi per-listener.
  */
 public final class AstolfoApiImpl implements AstolfoApi {
 
@@ -105,7 +110,11 @@ public final class AstolfoApiImpl implements AstolfoApi {
 
     @Override
     public PlaybackHandle playAtLocation(String world, double x, double y, double z, String file, PlaybackOptions options) {
-        return broadcastWorld(world, file, options);
+        if (audioEngine == null) return null;
+        World w = Bukkit.getWorld(world);
+        if (w == null) return null;
+        Location loc = new Location(w, x, y, z);
+        return audioEngine.playToLocation(List.copyOf(w.getPlayers()), file, options, loc);
     }
 
     @Override

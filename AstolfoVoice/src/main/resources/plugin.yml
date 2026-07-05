@@ -3,7 +3,7 @@ version: ${project.version}
 main: id.astolfo.voicechat.AstolfoVoice
 api-version: '1.21'
 authors: [Mizu]
-description: Proximity voice chat kompatibel protokol Simple Voice Chat, dengan sound physics raytrace, noise cancellation server-side, range dinamis, dan playback audio.
+description: Proximity voice chat kompatibel protokol Simple Voice Chat, dengan sound physics raytrace, noise cancellation server-side, range dinamis, dan playback audio mp3/ogg/wav.
 website: https://github.com/Mizu-ID/Astolfo
 load: STARTUP
 softdepend:
@@ -14,12 +14,12 @@ commands:
   astolfovoice:
     description: Perintah utama AstolfoVoice
     usage: |
-      /astolfovoice play <file> player <player1> <player2> ...
-      /astolfovoice play <file> world <world>
-      /astolfovoice play <file> all
-      /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume]
+      /astolfovoice play <file> player <player1> <player2> ... [volume] [pitch=P] [preset=PHONE]
+      /astolfovoice play <file> world <world> [volume] [pitch=P] [preset=PHONE]
+      /astolfovoice play <file> all [volume] [pitch=P] [preset=PHONE]
+      /astolfovoice play <file> location <world> <x> <y> <z> [distance] [volume] [pitch=P] [preset=PHONE]
       /astolfovoice play <file> group <group>
-      /astolfovoice stop [all | player <player> | id <id>]
+      /astolfovoice stop [all | player <name>]
       /astolfovoice list
       /astolfovoice voicerange <player> [range]
       /astolfovoice status [player]
@@ -32,6 +32,7 @@ commands:
       /astolfovoice playlist list [name]
       /astolfovoice playlist delete <name>
       /astolfovoice playlist shuffle <name>
+      Preset: NONE, PHONE, RADIO, MEGA, CAVE. pitch=1.0 normal.
     aliases: [asv, av, astolfo]
     permission: astolfo.command
     permission-message: Kamu tidak punya izin untuk perintah ini.
@@ -44,6 +45,7 @@ permissions:
       astolfo.command: true
       astolfo.play: true
       astolfo.stop: true
+      astolfo.list: true
       astolfo.voicerange: true
       astolfo.status: true
       astolfo.reset: true
@@ -53,6 +55,8 @@ permissions:
     default: op
   astolfo.stop:
     default: op
+  astolfo.list:
+    default: true
   astolfo.voicerange:
     default: op
   astolfo.status:

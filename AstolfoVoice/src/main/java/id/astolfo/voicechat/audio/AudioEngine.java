@@ -7,6 +7,7 @@ import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.voice.common.ClientConnection;
 import id.astolfo.voicechat.voice.server.ServerVoiceEvents;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
 import java.io.File;
@@ -15,9 +16,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * AudioEngine — orkestrasi decode + resample + streaming playback.
+ * AudioEngine - orkestrasi decode + resample + streaming playback.
  * OpusManager (shared, ThreadLocal) + AudioDecoder + Resampler + StreamingAudioPlayer.
  * activePlaybacks di-decrement otomatis saat playback selesai (via watcher).
+ *
+ * v0.2.1: playToLocation() untuk pemutaran posisi per-listener (LocationSoundPacket).
  */
 public final class AudioEngine {
 
@@ -67,6 +70,26 @@ public final class AudioEngine {
             short[] pcm48 = decodeTo48k(resolved);
             activePlaybacks.incrementAndGet();
             PlaybackHandleImpl handle = streamer.play(targets, pcm48, options, resolved.getName(), null);
+            handles.add(handle);
+            watchCompletion(handle);
+            return handle;
+        } catch (Exception e) {
+            activePlaybacks.decrementAndGet();
+            Bukkit.getLogger().warning("[Astolfo] Audio decode failed for " + file + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** Playback locational: suara di posisi `location`, attenuasi per-listener sesuai jarak. */
+    public PlaybackHandle playToLocation(List<Player> targets, String file, PlaybackOptions options, Location location) {
+        if (targets.isEmpty() || location == null || location.getWorld() == null) return null;
+        File resolved = resolveFile(file);
+        if (resolved == null) return null;
+        if (activePlaybacks.get() >= config.maxConcurrentPlaybacks()) return null;
+        try {
+            short[] pcm48 = decodeTo48k(resolved);
+            activePlaybacks.incrementAndGet();
+            PlaybackHandleImpl handle = streamer.playLocation(targets, pcm48, options, resolved.getName(), null, location);
             handles.add(handle);
             watchCompletion(handle);
             return handle;

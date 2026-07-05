@@ -3,8 +3,12 @@ package id.astolfo.voicechat.audio;
 import id.astolfo.voicechat.voice.common.AudioUtils;
 
 /**
- * Resampler — ubah sample rate PCM mono ke 48000 (target Opus SVC).
+ * Resampler - ubah sample rate PCM mono ke 48000 (target Opus SVC) + pitch shift.
  * Kualitas: LOW (linear), MEDIUM/HIGH (lanczos windowed sinc).
+ *
+ * Pitch shift (v0.2.1) berbasis rate: pitch>1 = sinyal lebih tinggi & cepat,
+ * pitch<1 = lebih rendah & lambat. Implementasi: resample dari 48000 ke
+ * 48000/pitch, laluanggap hasil sebagai 48000 (efek tarik-tegang waktu + frekuensi).
  */
 public final class Resampler {
 
@@ -22,6 +26,18 @@ public final class Resampler {
             case "LOW" -> linear(input, inRate, TARGET);
             default -> lanczos(input, inRate, TARGET, quality.equalsIgnoreCase("HIGH") ? 16 : 8);
         };
+    }
+
+    /**
+     * Pitch shift berbasis rate. ratio=1.0 -> tidak berubah. ratio=2.0 -> naik 1 oktaf
+     * (cepat & tinggi). ratio=0.5 -> turun 1 oktaf (lambat & rendah).
+     * Output tetap pada 48000 sample rate.
+     */
+    public static short[] changePitch(short[] input, double ratio) {
+        if (ratio == 1.0 || input.length == 0) return input;
+        // Resample dari 48000 ke 48000/ratio, laluanggap sebagai 48000.
+        double virtualRate = TARGET / ratio;
+        return lanczos(input, (int) Math.round(virtualRate), TARGET, 8);
     }
 
     /** Linear interpolation (cepat, kualitas rendah). */
@@ -97,7 +113,7 @@ public final class Resampler {
             int a = Math.abs(s);
             if (a > max) max = a;
         }
-        if (max == 0 || max >= 31200) return input; // sudah mendekati penuh
+        if (max == 0 || max >= 31200) return input;
         double target = 31200.0;
         double g = target / max;
         return applyGain(input, g);
