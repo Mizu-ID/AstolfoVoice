@@ -2,7 +2,7 @@
 // Konfigurasi shared toolchain Java 25 untuk semua subproject.
 allprojects {
     group = 'id.astolfo'
-    version = '0.1.0-SNAPSHOT'
+    version = '0.1.0'
 }
 
 subprojects {
