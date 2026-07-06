@@ -1,33 +1,43 @@
 package id.astolfo.voicechat.voice.server;
 
 import id.astolfo.voicechat.audio.DspProcessor;
+import id.astolfo.voicechat.audio.NoiseSuppressor;
 import id.astolfo.voicechat.audio.OpusManager;
 import id.astolfo.voicechat.config.AstolfoConfig;
 import id.astolfo.voicechat.physics.SoundPhysicsEngine;
 import id.astolfo.voicechat.voice.common.AudioUtils;
 import id.astolfo.voicechat.voice.common.MicPacket;
-import id.astolfo.voicechat.voice.server.MuteHolder;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * ProximityResolver — routing mic packet + sound physics advanced + Tier 2 DSP +
- * private channel routing.
+ * ProximityResolver - routing mic packet + sound physics advanced + Tier 2 DSP +
+ * noise cancellation server-side + private channel routing.
  *
  * Urutan routing per mic packet:
- *  1) Group sound (bila sender di grup) → anggota grup.
- *  2) Private channel (bila sender di channel privat) → anggota lain channel,
+ *  0) Mute gate + decode Opus (sekali) + noise cancellation per-sender (sekali,
+ *     bukan per-listener - hemat CPU) bila Tier 2 aktif di world sender.
+ *  1) Group sound (bila sender di grup) -> anggota grup (audio NC-clean bila ada).
+ *  2) Private channel (bila sender di channel privat) -> anggota lain channel,
  *     jarak tak terbatas antar anggota (distance besar FINITE, bukan Float.MAX_VALUE
  *     yang bikin client SVC NaN/overflow). Bila audibleNearby=true, lanjut proximity.
- *  3) Proximity broadcast ke world, terapkan sound physics.
+ *  3) Proximity broadcast ke world, terapkan sound physics (cache + smoothing
+ *     per pasangan via pairKey).
  *
- * Tier 1 (default): SoundPath → modulasi distance + whisper flag.
- * Tier 2 (opt-in per world): decode→DspProcessor→re-encode ("bergema/mendam beneran").
- * Dynamic range RMS (bisik→teriak) lewat decode opus.
+ * Tier 1 (default): SoundPath -> modulasi distance + whisper flag.
+ * Tier 2 (opt-in per world): decode -> NC -> DspProcessor -> re-encode
+ * ("bergema/mendam beneran" + suara bersih).
+ * Dynamic range RMS (bisik->teriak) lewat decode opus.
+ *
+ * Engine NC: SPECTRAL (NoiseSuppressor pure-Java, default), GATE (noise gate
+ * ringan), RNNOISE (native, roadmap - otomatis fallback ke SPECTRAL + log sekali).
  */
 public final class ProximityResolver {
 
@@ -36,6 +46,8 @@ public final class ProximityResolver {
     private final SoundPhysicsEngine physics;
     private final OpusManager opus;
     private final ConcurrentHashMap<String, DspProcessor> dspStates = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, NoiseSuppressor> suppressors = new ConcurrentHashMap<>();
+    private final AtomicBoolean rnnoiseWarned = new AtomicBoolean(false);
 
     public ProximityResolver(AstolfoConfig config, GroupManager groupManager, OpusManager opus) {
         this.config = config;
@@ -52,11 +64,14 @@ public final class ProximityResolver {
             return;
         }
 
-        // Dynamic range: decode opus → RMS dB → t.
+        boolean tier2 = isTier2(sender.getWorld().getName());
+        boolean ncWanted = tier2 && config.noiseCancellationEnabled();
+
+        // Decode Opus sekali: dipakai dynamic range (RMS) + NC + Tier 2 bake.
         double loudnessDb = -128;
         boolean hasDecoded = false;
         short[] decodedPcm = null;
-        if (config.dynamicRangeEnabled() && opus != null) {
+        if ((config.dynamicRangeEnabled() || ncWanted) && opus != null) {
             decodedPcm = opus.decode(mic.getOpusData());
             if (decodedPcm != null) {
                 loudnessDb = AudioUtils.getRmsAudioLevel(decodedPcm);
@@ -65,20 +80,38 @@ public final class ProximityResolver {
         }
         DynamicRange dr = computeDynamicRange(loudnessDb, mic.isWhispering(), hasDecoded, sender);
 
+        // Noise cancellation per-sender (sekali per packet). skip_silent_frames:
+        // frame di bawah threshold dilewatkan apa adanya (hemat CPU).
+        short[] cleanPcm = decodedPcm;
+        byte[] cleanOpus = null; // encode sekali, reuse untuk listener tanpa DSP per-pasangan
+        boolean ncApplied = false;
+        if (ncWanted && hasDecoded
+                && !(config.noiseSkipSilentFrames() && loudnessDb <= config.noiseSilentThresholdDb())) {
+            short[] processed = applyNoiseCancellation(senderUuid, decodedPcm);
+            if (processed != null) {
+                cleanPcm = processed;
+                cleanOpus = opus.encode(processed);
+                ncApplied = cleanOpus != null && cleanOpus.length > 0;
+            }
+        }
+        byte[] baseOpus = ncApplied ? cleanOpus : mic.getOpusData();
+        short[] basePcm = ncApplied ? cleanPcm : decodedPcm;
+
         // 1) Group sound
         UUID groupId = groupManager.getGroupOf(senderUuid);
         if (groupId != null) {
             List<UUID> members = groupManager.getMembers(groupId);
             for (UUID member : members) {
                 if (member.equals(senderUuid)) continue;
-                Player listener = org.bukkit.Bukkit.getPlayer(member);
+                Player listener = Bukkit.getPlayer(member);
                 if (listener == null) continue;
-                // Bypass physics: distance besar FINITE (bukan voiceRange) supaya grup jernih tanpa attenuasi proximity, kaya SVC asli. whisper grup selalu false.
+                // Bypass physics: distance besar FINITE (bukan voiceRange) supaya grup jernih
+                // tanpa attenuasi proximity, kaya SVC asli. whisper grup selalu false.
                 float distance = config.bypassPhysicsForGroups()
                         ? (float) Math.min(config.maxPlayerRangeOverride(), 1_000_000d)
                         : dr.range;
                 boolean groupWhisper = config.bypassPhysicsForGroups() ? false : dr.whisper;
-                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), groupWhisper, distance, null);
+                server.sendPlayerSound(listener, senderUuid, baseOpus, groupWhisper, distance, null);
             }
             return;
         }
@@ -88,15 +121,15 @@ public final class ProximityResolver {
         List<UUID> pcMembers = PrivateChannelRegistry.membersOf(senderUuid);
         if (pcMembers != null && pcOptions != null) {
             // Distance besar FINITE (bukan Float.MAX_VALUE) supaya client SVC tidak
-            // overflow/NaN. maxPlayerRangeOverride default 1_000_000 → attenuation ~0.
+            // overflow/NaN. maxPlayerRangeOverride default 1_000_000 -> attenuation ~0.
             float privateDistance = (float) Math.min(config.maxPlayerRangeOverride(), 1_000_000d);
             for (UUID member : pcMembers) {
                 if (member.equals(senderUuid)) continue;
-                Player listener = org.bukkit.Bukkit.getPlayer(member);
+                Player listener = Bukkit.getPlayer(member);
                 if (listener == null) continue;
-                server.sendPlayerSound(listener, senderUuid, mic.getOpusData(), dr.whisper, privateDistance, "astolfo_private");
+                server.sendPlayerSound(listener, senderUuid, baseOpus, dr.whisper, privateDistance, "astolfo_private");
             }
-            // Bila audibleNearby=false → sekitar TIDAK dengar: return (skip proximity).
+            // Bila audibleNearby=false -> sekitar TIDAK dengar: return (skip proximity).
             if (!pcOptions.isAudibleNearby()) {
                 return;
             }
@@ -105,13 +138,15 @@ public final class ProximityResolver {
         Location senderLoc = sender.getEyeLocation();
         if (senderLoc.getWorld() == null) return;
 
-        boolean tier2 = isTier2(senderLoc.getWorld().getName());
         // Broadcast range: untuk private channel audibleNearby, batasi ke range channel.
         double broadcastRange = config.broadcastRange() < 0 ? dr.range + 1 : config.broadcastRange();
         broadcastRange = Math.max(broadcastRange, config.shoutRange() + 8);
         if (pcOptions != null && pcOptions.isAudibleNearby() && pcOptions.getRange() > 0) {
             broadcastRange = Math.min(broadcastRange, pcOptions.getRange());
         }
+
+        boolean debugRay = config.debugEnabled() && config.logRaytrace();
+        boolean debugDsp = config.debugEnabled() && config.logDspTiming();
 
         // 3) Proximity broadcast ke world
         for (Player listener : senderLoc.getWorld().getPlayers()) {
@@ -131,38 +166,79 @@ public final class ProximityResolver {
 
             float effectiveDistance = (float) dr.range;
             boolean effectiveWhisper = dr.whisper;
-            byte[] opusToSend = mic.getOpusData();
+            byte[] opusToSend = baseOpus;
 
             if (config.soundPhysicsEnabled() && config.raytraceEnabled()) {
-                SoundPhysicsEngine.SoundPath path = physics.compute(senderLoc, listenerLoc, dist, senderLoc.getWorld());
+                String pairKey = senderUuid + ">" + listener.getUniqueId();
+                SoundPhysicsEngine.SoundPath path =
+                        physics.compute(senderLoc, listenerLoc, dist, senderLoc.getWorld(), pairKey);
+                if (debugRay) {
+                    Bukkit.getLogger().info(String.format(Locale.ROOT,
+                            "[Astolfo] ray %s dist=%.1f gain=%.2f lowpass=%.0f reverb=%.2f bias=%.1f audible=%b",
+                            pairKey, dist, path.gain, path.lowpassHz, path.reverb, path.distanceBias, path.audible));
+                }
                 if (!path.audible) continue;
                 effectiveDistance += path.distanceBias;
                 if (path.gain > 0f && path.gain < 1f) {
-                    // gain kecil → jarak efektif bertambah (terdengar lebih jauh/redam).
+                    // gain kecil -> jarak efektif bertambah (terdengar lebih jauh/redam).
                     effectiveDistance += (float) (dist * (1.0 / path.gain - 1.0) * 0.5);
                 }
                 if (path.muffled && effectiveDistance > dr.range) {
                     effectiveWhisper = effectiveWhisper || path.lowpassHz < 1200f;
                 }
 
-                if (tier2 && hasDecoded && decodedPcm != null
+                if (tier2 && hasDecoded && basePcm != null
                         && (path.lowpassHz < AudioUtils.SAMPLE_RATE / 2f || path.reverb > 0f || path.muffled)) {
-                    short[] baked = decodedPcm.clone();
-                    String key = senderUuid + ">" + listener.getUniqueId();
-                    DspProcessor dsp = dspStates.computeIfAbsent(key, k -> new DspProcessor());
+                    long t0 = debugDsp ? System.nanoTime() : 0L;
+                    short[] baked = basePcm.clone();
+                    DspProcessor dsp = dspStates.computeIfAbsent(pairKey, k -> new DspProcessor());
                     float cutoff = path.lowpassHz < AudioUtils.SAMPLE_RATE / 2f ? path.lowpassHz : 0f;
-                    float reverb = path.reverb;
-                    boolean gate = config.noiseCancellationEnabled() && config.noiseSkipSilentFrames();
-                    float gateDb = (float) config.noiseSilentThresholdDb();
-                    dsp.process(baked, cutoff, reverb, gate, gateDb);
+                    if (cutoff <= 0f && path.muffled) {
+                        // muffled tanpa cutoff spesifik dari physics -> default muffle config.
+                        cutoff = (float) config.muffleLowpassHz();
+                    }
+                    // reverb_gain menskala density fisika ke amount DSP (default 0.25 -> ~0.5x density).
+                    float reverbAmount = (float) Math.min(0.6, path.reverb * config.reverbGain() * 2.0);
+                    dsp.process(baked, cutoff, reverbAmount, (float) config.reverbDecaySeconds(), false, 0f);
                     byte[] reencoded = opus.encode(baked);
                     if (reencoded != null && reencoded.length > 0) {
                         opusToSend = reencoded;
+                    }
+                    if (debugDsp) {
+                        Bukkit.getLogger().info(String.format(Locale.ROOT,
+                                "[Astolfo] dsp %s cutoff=%.0f reverb=%.2f took=%.2fms",
+                                pairKey, cutoff, reverbAmount, (System.nanoTime() - t0) / 1e6));
                     }
                 }
             }
             server.sendPlayerSound(listener, senderUuid, opusToSend, effectiveWhisper, effectiveDistance, null);
         }
+    }
+
+    /**
+     * Terapkan engine NC dari config ke satu frame PCM. Return frame baru
+     * (SPECTRAL punya delay internal ~5ms) atau frame yang sama (GATE, in-place copy).
+     */
+    private short[] applyNoiseCancellation(UUID senderUuid, short[] pcm) {
+        String engine = config.noiseEngine().toUpperCase(Locale.ROOT);
+        if ("RNNOISE".equals(engine)) {
+            if (rnnoiseWarned.compareAndSet(false, true)) {
+                Bukkit.getLogger().warning("[Astolfo] noise_cancellation.engine=RNNOISE belum tersedia "
+                        + "(native lib roadmap) - fallback otomatis ke SPECTRAL.");
+            }
+            engine = "SPECTRAL";
+        }
+        double strength = Math.max(0.0, Math.min(1.0, config.noiseStrength()));
+        if ("GATE".equals(engine)) {
+            // gate ringan: pakai DspProcessor per-sender khusus NC (state envelope kontinu).
+            short[] copy = pcm.clone();
+            DspProcessor dsp = dspStates.computeIfAbsent("nc:" + senderUuid, k -> new DspProcessor());
+            dsp.process(copy, 0f, 0f, true, (float) config.noiseSilentThresholdDb());
+            return copy;
+        }
+        // SPECTRAL (default): NoiseSuppressor streaming per-sender.
+        NoiseSuppressor sup = suppressors.computeIfAbsent(senderUuid, k -> new NoiseSuppressor());
+        return sup.process(pcm, strength);
     }
 
     private boolean isTier2(String world) {
@@ -171,8 +247,13 @@ public final class ProximityResolver {
         return worlds == null || worlds.isEmpty() || worlds.contains(world);
     }
 
+    /** Bersihkan semua state per-player: DSP pasangan, suppressor NC, cache physics. */
     public void clearDspFor(UUID player) {
-        dspStates.entrySet().removeIf(e -> e.getKey().startsWith(player + ">") || e.getKey().endsWith(">" + player));
+        dspStates.entrySet().removeIf(e -> e.getKey().startsWith(player + ">")
+                || e.getKey().endsWith(">" + player)
+                || e.getKey().equals("nc:" + player));
+        suppressors.remove(player);
+        physics.clearFor(player);
     }
 
     private static final class DynamicRange {

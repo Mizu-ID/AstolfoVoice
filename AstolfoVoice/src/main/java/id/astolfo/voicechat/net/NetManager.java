@@ -11,8 +11,14 @@ import java.util.function.Function;
 
 /**
  * NetManager — registrasi plugin channel + kirim paket ke client.
- * Channel namespace "voicechat:*" (byte-exact SVC). Mengandalkan Compatibility
- * untuk addChannel/removeChannel/runTask supaya NMS-free.
+ * Channel namespace "voicechat:*" (byte-exact SVC).
+ *
+ * Announcement channel ke client: Bukkit TIDAK mengizinkan plugin mengirim di
+ * channel reserved "minecraft:register" (ChannelNotRegisteredException), tapi
+ * CraftBukkit OTOMATIS mengumumkan semua INCOMING channel terdaftar ke client
+ * saat join. Maka channel outgoing (server→client) ikut didaftarkan sebagai
+ * incoming dengan listener no-op — client SVC menerima daftar "voicechat:*"
+ * lengkap tanpa NMS, dan handshake request_secret jalan.
  */
 public final class NetManager {
 
@@ -23,10 +29,6 @@ public final class NetManager {
 
     /** Abstraction ringan untuk operasi yang beda antar Paper/Spigot. */
     public interface Compatibility {
-        void addChannel(Player player, String channel);
-
-        void removeChannel(Player player, String channel);
-
         void runTask(Runnable runnable);
 
         boolean isCompatible(Player player);
@@ -79,19 +81,6 @@ public final class NetManager {
         channelNames.clear();
     }
 
-    /** Daftarkan semua channel outgoing ke player (dipanggil saat join). */
-    public void registerChannelsToPlayer(Player player) {
-        for (String channel : Bukkit.getMessenger().getOutgoingChannels(plugin)) {
-            compatibility.addChannel(player, channel);
-        }
-    }
-
-    public void unregisterChannelsFromPlayer(Player player) {
-        for (String channel : Bukkit.getMessenger().getOutgoingChannels(plugin)) {
-            compatibility.removeChannel(player, channel);
-        }
-    }
-
     public Set<String> getChannelNames() {
         return channelNames;
     }
@@ -128,6 +117,12 @@ public final class NetManager {
             String channel = template.getID().toString();
             channelNames.add(channel);
             Bukkit.getMessenger().registerOutgoingPluginChannel(plugin, channel);
+            // Daftarkan juga sebagai incoming no-op: CraftBukkit hanya meng-announce
+            // INCOMING channel ke client (minecraft:register otomatis saat join).
+            // Tanpa ini client SVC tidak tahu server punya voicechat → tidak connect.
+            Bukkit.getMessenger().registerIncomingPluginChannel(plugin, channel, (ch, player, bytes) -> {
+                // client tidak pernah mengirim di channel server→client; abaikan.
+            });
         } catch (Exception e) {
             throw new IllegalStateException("Failed to register outgoing packet " + packetClass.getSimpleName(), e);
         }

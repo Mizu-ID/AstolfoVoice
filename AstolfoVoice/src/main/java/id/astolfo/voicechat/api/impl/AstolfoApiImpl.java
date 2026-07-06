@@ -139,6 +139,14 @@ public final class AstolfoApiImpl implements AstolfoApi {
     // ---- Private channel (routing audio nyata via PrivateChannelRegistry) ----
     @Override
     public PrivateChannel createPrivateChannel(List<UUID> members, PrivateChannelOptions options) {
+        if (options == null) {
+            // default dari config audio.private_channel.*
+            var cfg = id.astolfo.voicechat.AstolfoVoice.INSTANCE != null
+                    ? id.astolfo.voicechat.AstolfoVoice.INSTANCE.getAstolfoConfig() : null;
+            options = cfg != null
+                    ? new PrivateChannelOptions(cfg.privateChannelDefaultAudibleNearby(), cfg.privateChannelDefaultRange())
+                    : new PrivateChannelOptions();
+        }
         PrivateChannelImpl ch = new PrivateChannelImpl(members, options);
         privateChannels.put(ch.getId(), ch);
         PrivateChannelRegistry.register(ch);

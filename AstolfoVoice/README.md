@@ -21,10 +21,14 @@
 connect tanpa ganti mod, tanpa patcher — server bertindak seperti server SVC pada
 sisi transport (UDP `24454` + plugin channel `voicechat:*`, AES-128-GCM, Opus 48k/20ms).
 
-> **v0.2.2 — femboyish pink UI, new presets, smart tab-completion.** Semua pesan
-> plugin sekarang pakai palet pink candy yang konsisten (✿ ♡ ⋆), hand-crafted bukan
-> generik. Command punya tab completion context-aware (file audio, playlist, world,
-> preset, player). Preset baru KAWAII + LOFI. Bell feedback saat command sukses.
+> **v0.3.0 — connect fix, physics v2, noise cancellation spektral, config yang jaga
+> dirinya sendiri.** Fix krusial: channel `voicechat:*` sekarang diumumkan ke client
+> lewat mekanisme announce bawaan CraftBukkit (kirim `minecraft:register` manual
+> dilarang Bukkit — ini penyebab client tidak bisa connect). Sound physics dapat
+> smoothing temporal + cache per pasangan + medium lava + knob kekuatan per-fitur.
+> Noise cancellation server-side pure-Java (spectral subtraction adaptif, tanpa
+> native lib). `config.yml` auto-heal saat corrupt & auto-migrate saat outdated
+> (nilai kamu dipertahankan, backup dibuat).
 
 &nbsp;
 
@@ -51,19 +55,34 @@ Model gelombang suara, bukan gate keras:
   dinding 2-wide mendam, bukan bisu. Gain curve halus `1/(1+extra*k)`.
 - **Transmission** — suara tembus dinding tipis, redaman material-dependent
   (wool/leaves menyerap besar, glass sedang, stone/obsidian opaque). Beer-Lambert.
-- **Medium (air)** — air di jalur -> lowpass dalam + absorption high-freq eksponensial
-  per meter (`700*e^(-m*0.35)` Hz). Makin jauh di air, makin mendam.
-- **Reverb** — density block solid + cek atap -> indikasi ruang tertutup (bergema).
+  Tebal ≥ `max_occlusion_blocks` = tidak tembus (difraksi masih dihitung).
+- **Medium (air & lava)** — medium di jalur -> lowpass dalam + absorption high-freq
+  eksponensial per meter (`700*e^(-m*0.35)` Hz; lava lebih rapat). Makin jauh
+  terendam, makin mendam.
+- **Reverb** — density block solid (sparse sampling) + probe kolom atap -> indikasi
+  ruang tertutup (bergema).
+- **Smoothing temporal** (v0.3.0) — hasil physics di-lerp per pasangan
+  pembicara-pendengar (`smoothing_factor`), tidak ada lompatan kasar saat lewat
+  tepi obstacle.
+- **Cache per pasangan** (v0.3.0) — raytrace di-cache `cache_ticks` tick, bukan
+  diulang tiap paket 20 ms.
+- **Knob kekuatan per-fitur** (v0.3.0) — `diffraction_strength`,
+  `transmission_strength`, `medium_strength` (0.0–2.0; 0 = matikan).
 - **Tier 1** (default, murah): modulasi `distance` + whisper flag.
 - **Tier 2** (opt-in per world): decode Opus -> DSP bake (low/high/band-pass biquad
-  + reverb FDN + noise gate) -> re-encode. Efek "bergema/mendam beneran".
+  + reverb FDN dengan decay RT60 dari config) -> re-encode. Efek "bergema/mendam
+  beneran".
 
 ### Voice range dinamis
 Decode Opus -> RMS dB -> interpolasi whisper -> normal -> shout. Bisik kecil, teriak
 jauh. `/av voicerange <player> [range]` + API override. Shout dibatasi permission.
 
-### Noise cancellation (server-side, opt-in)
-Noise gate pada PCM + jalur Tier 2. RNNoise/Speex native = roadmap (lihat batasan).
+### Noise cancellation (server-side, opt-in, butuh Tier 2)
+Engine **SPECTRAL** (v0.3.0): spectral subtraction adaptif pure-Java — STFT 512
+overlap-add + noise floor tracking otomatis, tanpa kalibrasi, tanpa native lib.
+Bagus untuk hum kipas / hiss / noise stasioner. Engine `GATE` (murah) juga ada;
+`RNNOISE` neural = roadmap native (auto-fallback ke SPECTRAL). Agresivitas via
+`noise_cancellation.strength`.
 
 </td>
 <td width="58" valign="middle" align="center">
@@ -158,14 +177,17 @@ cache. ThreadLocal Opus. TTL drop + bounded `readByteArray`. O(1) lookup address
 ## Build
 ```bash
 ./gradlew :AstolfoVoice:shadowJar
-# -> AstolfoVoice/build/libs/AstolfoVoice-0.2.3.jar
+# -> AstolfoVoice/build/libs/AstolfoVoice-0.3.0.jar
 ```
 Butuh JDK 25 + Gradle 9.6.1 (wrapper disertakan). Build pertama online, lalu `--offline`.
 
 ## Pasang
-1. Drop `AstolfoVoice-0.2.3.jar` ke `plugins/`.
+1. Drop `AstolfoVoice-0.3.0.jar` ke `plugins/`.
 2. Start server -> `config.yml` + folder `audio/` dibuat otomatis.
 3. Client pakai mod Simple Voice Chat biasa. Buka port UDP `24454`.
+
+`config.yml` dijaga otomatis: corrupt -> backup + regenerate; outdated -> nilai kamu
+di-merge ke template baru (backup dibuat). Tidak perlu hapus config saat update.
 
 ## Command (`/astolfovoice` · alias `/av`, `/asv`, `/astolfo`)
 ```
@@ -186,18 +208,24 @@ Preset: NONE PHONE RADIO MEGA CAVE KAWAII LOFI  ·  pitch=1.0 normal
 
 &nbsp;
 
-## Status & batasan (v0.2.2 — jujur)
-**Sudah solid:** transport UDP + handshake byte-exact, roster client, proximity
-broadcast + sound physics Tier 1 (difraksi/transmisi/medium air eksponensial/reverb),
-dynamic range, decode mp3/ogg/wav + streaming playback, location playback per-listener,
-sound-effect preset (PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) + pitch, list audio &
-playlist clickable, **UI pink candy konsisten + sound feedback + tab completion
-context-aware**, playlist, public API,
-**mute routing (MuteHolder), group sound jernih saat bypass, spectator gate, path-traversal hardening, reload AstolfoConfig beneran, no async kick, per-player cleanup on quit** + PlaceholderAPI + PrivateChannel, build fat-jar.
+## Status & batasan (v0.3.0 — jujur)
+**Sudah solid:** transport UDP + handshake byte-exact (**fix v0.3.0: announce channel
+via mekanisme bawaan CraftBukkit — sebelumnya client tidak bisa connect karena
+`minecraft:register` manual ditolak Bukkit**), roster client, proximity broadcast +
+sound physics Tier 1 v2 (difraksi/transmisi/medium air+lava/reverb + smoothing +
+cache + knob kekuatan), dynamic range, **noise cancellation spektral pure-Java**,
+**config auto-heal/auto-migrate (config_version + backup)**, decode mp3/ogg/wav +
+streaming playback, location playback per-listener, sound-effect preset
+(PHONE/RADIO/MEGA/CAVE/**KAWAII**/**LOFI**) + pitch, list audio & playlist clickable,
+UI pink candy konsisten + sound feedback + tab completion context-aware, playlist,
+public API, mute routing (MuteHolder), group sound jernih saat bypass, spectator gate,
+path-traversal hardening, reload AstolfoConfig beneran (termasuk auto-update), no
+async kick, per-player cleanup on quit + PlaceholderAPI (server & player placeholder
+baru) + PrivateChannel, build fat-jar.
 
 **Masih kasar / roadmap:**
-- Noise cancellation penuh (RNNoise/Speex native) belum di-bundle — saat ini noise
-  gate + Tier 2 bake + preset.
+- RNNoise neural native belum di-bundle — NC sekarang SPECTRAL pure-Java (kelas
+  Speex/WebRTC classic) + GATE.
 - "Kompatibel semua versi client" = aspirasi; default 20, adapter legacy menyusul.
 - Reverb/low-pass "asli" di mixer client SVC fixed -> efek beneran cuma lewat Tier 2.
 - Belum ada test otomatis / regression fixture byte-exact vs SVC.

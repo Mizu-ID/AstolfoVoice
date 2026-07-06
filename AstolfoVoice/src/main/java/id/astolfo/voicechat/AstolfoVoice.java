@@ -7,6 +7,7 @@ import id.astolfo.voicechat.audio.OpusManager;
 import id.astolfo.voicechat.audio.PlaylistManager;
 import id.astolfo.voicechat.compat.PaperCompatibility;
 import id.astolfo.voicechat.config.AstolfoConfig;
+import id.astolfo.voicechat.config.ConfigUpdater;
 import id.astolfo.voicechat.integration.AstolfoExpansion;
 import id.astolfo.voicechat.net.NetManager;
 import id.astolfo.voicechat.net.PacketRateLimiter;
@@ -16,7 +17,6 @@ import id.astolfo.voicechat.voice.server.AstolfoOverride;
 import id.astolfo.voicechat.voice.server.MuteHolder;
 import id.astolfo.voicechat.voice.server.VoiceServer;
 import org.bukkit.Bukkit;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -60,13 +60,10 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     public void onEnable() {
         INSTANCE = this;
 
-        // 1. Config + default resources
+        // 1. Config: auto-create bila belum ada, auto-heal bila corrupt,
+        //    auto-migrate bila outdated (nilai user dipertahankan, backup dibuat).
         File configFile = new File(getDataFolder(), "config.yml");
-        InputStream defaultConfig = getResource("config.yml");
-        if (defaultConfig != null) {
-            AstolfoConfig templateCfg = new AstolfoConfig(YamlConfiguration.loadConfiguration(new java.io.StringReader("")));
-            templateCfg.saveDefaultIfMissing(configFile, defaultConfig);
-        }
+        ConfigUpdater.ensure(configFile, () -> getResource("config.yml"), getLogger());
         this.config = AstolfoConfig.load(configFile);
 
         // 2. Auto-buat folder audio + copy README
@@ -123,9 +120,11 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
         // 9. Register listeners
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        // 10. Register service (public API)
+        // 10. Register service (public API) - bisa dimatikan via integration.public_api.
         this.api = new AstolfoApiImpl(voiceEvents, audioDir, config.voiceRange(), audioEngine);
-        getServer().getServicesManager().register(AstolfoApi.class, api, this, ServicePriority.Normal);
+        if (config.publicApiEnabled()) {
+            getServer().getServicesManager().register(AstolfoApi.class, api, this, ServicePriority.Normal);
+        }
 
         // 11. Command
         AstolfoCommand cmd = new AstolfoCommand(this, voiceEvents, config, audioEngine, playlists);
@@ -138,8 +137,8 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
             getLogger().log(Level.WARNING, "Failed to register command", e);
         }
 
-        // 12. Soft-hook PlaceholderAPI
-        if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
+        // 12. Soft-hook PlaceholderAPI (hormati integration.placeholderapi.enabled)
+        if (config.placeholderApiEnabled() && Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             try {
                 new AstolfoExpansion(this, api).register();
                 getLogger().info("PlaceholderAPI expansion registered");
@@ -188,13 +187,14 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         voiceEvents.getPlayerStateManager().onPlayerJoin(player);
-        netManager.registerChannelsToPlayer(player);
+        // Channel voicechat:* diumumkan otomatis oleh CraftBukkit saat join
+        // (semua terdaftar sebagai incoming di NetManager) — tidak perlu kirim
+        // minecraft:register manual (reserved channel, dilarang Bukkit).
     }
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        netManager.unregisterChannelsFromPlayer(player);
         voiceEvents.disconnectClient(player.getUniqueId());
         voiceEvents.getPlayerStateManager().onPlayerQuit(player);
         // #7: clear state per-player yang bocor saat quit (override, mute).
@@ -203,10 +203,12 @@ public final class AstolfoVoice extends JavaPlugin implements Listener {
     }
 
     // ---- Reload (#5) ----
-    /** Reload AstolfoConfig dari disk + apply nilai baru. Return true bila sukses. */
+    /** Reload AstolfoConfig dari disk + apply nilai baru. Return true bila sukses.
+     *  Auto-heal/auto-migrate jalan dulu, jadi config corrupt/outdated sembuh saat reload. */
     public boolean reloadAstolfoConfig() {
         try {
             File configFile = new File(getDataFolder(), "config.yml");
+            ConfigUpdater.ensure(configFile, () -> getResource("config.yml"), getLogger());
             this.config = AstolfoConfig.load(configFile);
             getLogger().info("AstolfoConfig reloaded: range=" + config.voiceRange()
                     + " whisper=" + config.whisperRange() + " shout=" + config.shoutRange()

@@ -254,6 +254,41 @@ Lihat §10 untuk detail analisis evaluations.txt. Fix (semua compat-safe, server
 README root rewrite dense (section "Kenapa Astolfo", Quick start, Kompatibilitas SVC).
 READMEs bump ke v0.2.3 + status 7-fix.
 
+### v0.3.0 — connect fix + physics v2 + NC spektral + config auto-update
+
+- **FIX KRUSIAL connect:** client tidak bisa connect karena `PaperCompatibility`
+  mengirim plugin message di channel reserved `minecraft:register` →
+  `ChannelNotRegisteredException` (Bukkit melarang; lihat error.txt lama).
+  Solusi NMS-free: SEMUA channel voicechat:* (termasuk outgoing) didaftarkan juga
+  sebagai INCOMING no-op di `NetManager.registerOutgoing` — CraftBukkit otomatis
+  meng-announce incoming channel ke client saat join. addChannel/removeChannel +
+  registerChannelsToPlayer dihapus.
+- **Sound physics v2:** smoothing temporal per pasangan (lerp, `smoothing_factor`),
+  cache TTL per pasangan (`cache_ticks` beneran dipakai), medium lava, probe atap
+  kolom (bukan satu titik), sparse reverb sampling (biaya ~1/8), knob
+  `diffraction_strength`/`transmission_strength`/`medium_strength`,
+  `max_occlusion_blocks` beneran memutus transmisi, mojibake komentar dibersihkan.
+  `clearFor(uuid)` buang cache saat quit.
+- **Noise cancellation:** `NoiseSuppressor.java` baru — spectral subtraction adaptif
+  pure-Java (STFT 512, sqrt-Hann OLA, minimum-statistics noise floor, gain smoothing).
+  Engine config: SPECTRAL (default) | GATE | RNNOISE (fallback SPECTRAL + warn sekali).
+  Dipakai di ProximityResolver per-sender sekali per paket (bukan per-listener);
+  NC-clean audio juga dipakai group/private channel. `fallback_to_speex` diganti
+  `strength` (0..1).
+- **ProximityResolver:** decode sekali, Tier 2 pakai `reverb_gain`/`reverb_decay_seconds`
+  /`muffle_lowpass_hz` dari config (sebelumnya diabaikan), debug `log_raytrace`/
+  `log_dsp_timing` diwire, ReverbNet dapat setDecay RT60.
+- **ConfigUpdater.java** baru: `config_version` (=2) di config.yml; corrupt → backup
+  `.corrupt-<ts>` + regenerate; outdated/missing key → merge nilai user ke template
+  (komentar utuh) + backup `.bak-<ts>`. Dipanggil onEnable + reloadAstolfoConfig.
+- **PlaceholderAPI:** `%astolfo_version%` = versi plugin (dulu salah: compat),
+  placeholder baru port/physics/physics_tier/nc/nc_engine/dynamic_range/voice_range/
+  whisper_range/shout_range/group_size, null-safety.
+- **Config wiring:** `integration.public_api` + `integration.placeholderapi.enabled`
+  dihormati; `audio.formats` dipakai resolveFile; `audio.private_channel.*` jadi
+  default PrivateChannelOptions; section integrasi denizen/skript dihapus dari
+  config (hook via public_api). getter baru di AstolfoConfig.
+
 ---
 
 ## 6. Fitur Lengkap (status v0.2.3)
@@ -491,4 +526,6 @@ Permissions: `astolfo.command`(true), `astolfo.admin`(op, children semua),
 7. **Repo private** — tanya user kalau mau set public.
 8. **Zero TODO/stub/empty policy** — scan sebelum commit, harus 0 marker.
 
-— Dibuat setelah v0.2.3. 5 rilis publish. 80 file Java. Build sukses. Compat SVC aman.
+— Dibuat setelah v0.2.3, diperbarui setelah v0.3.0 (connect fix + physics v2 + NC
+spektral + config auto-update). 6 rilis publish. 82 file Java. Build sukses.
+Compat SVC aman.

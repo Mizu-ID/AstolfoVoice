@@ -48,18 +48,21 @@ public final class AudioEngine {
         }
         File direct = safeInside(name);
         if (direct != null && direct.exists()) return direct;
-        for (String ext : new String[]{".mp3", ".ogg", ".wav"}) {
-            File f = safeInside(name + ext);
+        List<String> formats = config.audioFormats();
+        for (String ext : formats) {
+            File f = safeInside(name + "." + ext);
             if (f != null && f.exists()) return f;
         }
         File[] files = audioDir.listFiles();
         if (files != null) {
             for (File f : files) {
                 String n = f.getName();
-                if (n.equalsIgnoreCase(name) || n.equalsIgnoreCase(name + ".mp3")
-                        || n.equalsIgnoreCase(name + ".ogg") || n.equalsIgnoreCase(name + ".wav")) {
-                    // hanya file di dalam audioDir (listFiles sudah top-level, tapi pastikan).
-                    return f;
+                if (n.equalsIgnoreCase(name)) return f;
+                for (String ext : formats) {
+                    if (n.equalsIgnoreCase(name + "." + ext)) {
+                        // hanya file di dalam audioDir (listFiles sudah top-level, tapi pastikan).
+                        return f;
+                    }
                 }
             }
         }

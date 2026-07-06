@@ -9,29 +9,45 @@ import org.bukkit.block.Block;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
- * SoundPhysicsEngine ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â simulasi gelombang suara realistis (bukan gate keras).
+ * SoundPhysicsEngine - simulasi gelombang suara realistis (bukan gate keras).
  *
- * Model fisika (v0.2, diperdalam):
+ * Model fisika (v0.3, disempurnakan):
  *  - DIRECT path: line-of-sight (fluid NEVER di sini; medium ditangani terpisah).
  *  - DIFFRACTION: suara membungkung di tepi obstacle (Fresnel-ish probe multi-offset).
  *    Tiang 1-block tetap kedengar (leak besar), dinding 2-wide agak mendam, bukan bisu.
- *    Gain curve halus (1/(1+extra*k)) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â bukan linear abrupt.
+ *    Gain curve halus (1/(1+extra*k)) - bukan linear abrupt. Skala via
+ *    sound_physics.diffraction_strength (0 = off, hemat CPU).
  *  - TRANSMISSION: suara tembus dinding tipis, redaman material-dependent
  *    (wool/leaves menyerap besar; glass redam sedang; stone/obsidian opaque penuh).
- *    Leak = e^(-absorption*thickness) (hukum Beer-Lambert).
- *  - MEDIUM: air di eye/jalur ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ lowpass dalam + absorption high-freq EKSPONENSIAL
- *    per meter air (bukan per-block linier) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â makin jauh di air makin mendam.
- *  - REVERB: density block solid sekitar listener + sender (ruang tertutup).
- *    Enclosed flag + density ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ reverb amount + distance bias.
- *  - SMOOTHING: distance bias di-haluskkan (lerp) biar gak ada lompatan kasar
- *    saat listener bergerak sedikit melewati obstacle edge.
+ *    Leak = e^(-absorption*thickness*strength) (hukum Beer-Lambert).
+ *    Tebal >= max_occlusion_blocks = tidak tembus sama sekali (difraksi masih boleh).
+ *  - MEDIUM: air/lava di eye/jalur -> lowpass dalam + absorption high-freq EKSPONENSIAL
+ *    per meter (bukan per-block linier) - makin jauh di medium makin mendam.
+ *    Lava jauh lebih mendam daripada air. Skala via medium_strength.
+ *  - REVERB: density block solid sekitar listener (sparse sampling, murah) + probe
+ *    atap ke atas -> ruang tertutup (bergema).
+ *  - SMOOTHING: gain/lowpass/distance-bias di-lerp per pasangan sender>listener
+ *    (sound_physics.smoothing_factor) biar tidak ada lompatan kasar saat player
+ *    bergerak melewati tepi obstacle.
+ *  - CACHE: hasil per pasangan di-cache selama sound_physics.cache_ticks tick
+ *    (raytrace tidak diulang tiap paket 20ms).
  *
  * Output SoundPath: gain, lowpassHz, reverb, distanceBias, muffled, audible, clear.
  */
 public final class SoundPhysicsEngine {
 
+    /** Umur maksimum state smoothing sebelum snap ulang (player teleport dsb). */
+    private static final long SMOOTH_STALE_MS = 2000L;
+    /** Batas ukuran map sebelum sweep lazy entry basi. */
+    private static final int SWEEP_THRESHOLD = 8192;
+
     private final AstolfoConfig config;
+    private final ConcurrentHashMap<String, CachedPath> pathCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, SmoothState> smoothStates = new ConcurrentHashMap<>();
 
     public SoundPhysicsEngine(AstolfoConfig config) {
         this.config = config;
@@ -58,7 +74,38 @@ public final class SoundPhysicsEngine {
         }
     }
 
+    private static final class CachedPath {
+        final SoundPath path;
+        final long expireAt;
+        CachedPath(SoundPath path, long expireAt) {
+            this.path = path;
+            this.expireAt = expireAt;
+        }
+    }
+
+    private static final class SmoothState {
+        float gain;
+        float lowpass;
+        float bias;
+        long lastMs;
+        SmoothState(float gain, float lowpass, float bias, long lastMs) {
+            this.gain = gain;
+            this.lowpass = lowpass;
+            this.bias = bias;
+            this.lastMs = lastMs;
+        }
+    }
+
+    /** Versi tanpa smoothing/cache per-pasangan (pairKey null). */
     public SoundPath compute(Location from, Location to, double rawDistance, World world) {
+        return compute(from, to, rawDistance, world, null);
+    }
+
+    /**
+     * Hitung SoundPath sender->listener. pairKey (format "senderUuid>listenerUuid",
+     * boleh null) mengaktifkan cache TTL + smoothing temporal per pasangan.
+     */
+    public SoundPath compute(Location from, Location to, double rawDistance, World world, String pairKey) {
         if (rawDistance < 1e-3) {
             return new SoundPath(1f, Float.MAX_VALUE, 0f, 0f, false, true, true);
         }
@@ -66,6 +113,26 @@ public final class SoundPhysicsEngine {
             return new SoundPath(1f, Float.MAX_VALUE, 0f, 0f, false, true, true);
         }
 
+        long now = System.currentTimeMillis();
+        if (pairKey != null) {
+            CachedPath cached = pathCache.get(pairKey);
+            if (cached != null && cached.expireAt > now) {
+                return cached.path;
+            }
+        }
+
+        SoundPath raw = computeRaw(from, to, rawDistance, world);
+        SoundPath result = pairKey == null ? raw : smooth(pairKey, raw, now);
+
+        if (pairKey != null) {
+            long ttl = Math.max(1, config.cacheTicks()) * 50L;
+            pathCache.put(pairKey, new CachedPath(result, now + ttl));
+            sweepIfNeeded(now);
+        }
+        return result;
+    }
+
+    private SoundPath computeRaw(Location from, Location to, double rawDistance, World world) {
         Vector start = from.toVector();
         Vector end = to.toVector();
         Vector dir = end.clone().subtract(start);
@@ -80,36 +147,52 @@ public final class SoundPhysicsEngine {
         Transmission tr = measureTransmission(start, dir, maxDist, world);
 
         // 3) DIFFRACTION: jalur edge sekitar obstacle bila direct tertutup.
+        double diffStrength = clampD(config.diffractionStrength(), 0.0, 2.0);
         float diffractionGain = 0f;
         float diffractionBias = 0f;
-        if (!directClear) {
+        if (!directClear && diffStrength > 0) {
             DiffractionResult dif = probeDiffraction(from, to, dir, maxDist, world, direct);
-            diffractionGain = dif.gain;
+            diffractionGain = (float) Math.min(1.0, dif.gain * diffStrength);
             diffractionBias = dif.distanceBias;
         }
 
-        // 4) MEDIUM: air (per-jarak, eksponensial).
+        // 4) MEDIUM: air/lava (per meter, eksponensial).
         MediumResult medium = probeMedium(from, to, start, dir, maxDist, world);
+        double medStrength = clampD(config.mediumStrength(), 0.0, 2.0);
 
-        // 5) REVERB: density sekitar listener + sender.
+        // 5) REVERB: density sekitar listener (sparse) + probe atap.
         ReverbResult rev = probeReverb(to, world);
 
         // ---- Akumulasi gain ----
         float directGain = directClear ? 1f : 0f;
-        // transmission leak: e^(-absorption * thickness) (Beer-Lambert).
-        float transmitGain = tr.thickness <= 0 ? 0f : (float) Math.exp(-tr.absorption * tr.thickness);
-        // Gain akhir = jalur terkuat (direct > diffraksi > transmisi).
+        // transmission leak: e^(-absorption * thickness * strength) (Beer-Lambert).
+        double trStrength = clampD(config.transmissionStrength(), 0.0, 2.0);
+        float transmitGain;
+        if (tr.thickness <= 0) {
+            transmitGain = 0f;
+        } else if (tr.thickness >= config.maxOcclusionBlocks()) {
+            // Dinding terlalu tebal: tidak ada transmisi sama sekali (difraksi masih mungkin).
+            transmitGain = 0f;
+        } else {
+            transmitGain = (float) Math.exp(-tr.absorption * tr.thickness * trStrength);
+        }
+        // Gain akhir = jalur terkuat (direct > difraksi > transmisi).
         float gain = Math.max(directGain, Math.max(transmitGain, diffractionGain));
 
         // ---- Lowpass ----
         float lowpass = Float.MAX_VALUE;
         // Air: lowpass dalam + makin jauh makin rendah (absorption high-freq eksponensial per meter).
-        if (medium.waterMeters > 0) {
+        if (medium.waterMeters > 0 && medStrength > 0) {
             // 700 Hz baseline di air, turun ~exp per meter (air menyerap high-freq kuat).
-            float waterCut = (float) (700f * Math.exp(-medium.waterMeters * 0.35));
+            float waterCut = (float) (700f * Math.exp(-medium.waterMeters * 0.35 * medStrength));
             lowpass = Math.min(lowpass, Math.max(180f, waterCut));
         }
-        if (tr.thickness >= 1) {
+        // Lava: jauh lebih rapat dari air -> baseline rendah + absorption lebih cepat.
+        if (medium.lavaMeters > 0 && medStrength > 0) {
+            float lavaCut = (float) (400f * Math.exp(-medium.lavaMeters * 0.5 * medStrength));
+            lowpass = Math.min(lowpass, Math.max(120f, lavaCut));
+        }
+        if (tr.thickness >= 1 && !directClear && trStrength > 0) {
             // dinding: cutoff turun dengan tebal + material (wool/leaves lebih rendah).
             float base = tr.maxOpaque ? 350f : 2200f;
             float wallCut = Math.max(base, 2200f - tr.thickness * (tr.softMaterial ? 700f : 500f));
@@ -119,9 +202,8 @@ public final class SoundPhysicsEngine {
             // difraksi melemahkan high-freq sedikit (edge scattering).
             lowpass = Math.min(lowpass, 2600f);
         }
-        // Distance air absorption tambahan: high-freq hilang di udara juga, per meter (lemah).
-        // (efek halus, di luar air.)
-        double airAbsorb = rawDistance * 0.3; // Hz*per-block lemah
+        // Distance air absorption: high-freq hilang di udara juga, per meter (efek halus > 32 block).
+        double airAbsorb = rawDistance * 0.3;
         if (airAbsorb > 0 && rawDistance > 32) {
             lowpass = Math.min(lowpass, (float) (16000f - airAbsorb * 40f));
             if (lowpass < 4000f) lowpass = 4000f;
@@ -137,19 +219,66 @@ public final class SoundPhysicsEngine {
             distanceBias += (float) config.reverbPenalty() * rev.density;
         }
         if (medium.waterMeters > 0) {
-            // air memperpanjang jarak efektif (absorb energi) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â tambahan halus per meter.
-            distanceBias += medium.waterMeters * 1.2f;
+            // air memperpanjang jarak efektif (absorb energi) - tambahan halus per meter.
+            distanceBias += (float) (medium.waterMeters * 1.2 * medStrength);
+        }
+        if (medium.lavaMeters > 0) {
+            distanceBias += (float) (medium.lavaMeters * 2.5 * medStrength);
         }
 
         // ---- Flags ----
         boolean muffled = lowpass < 2400f || (!directClear && gain < 0.9f);
-        boolean clear = directClear && medium.waterMeters == 0 && tr.thickness == 0;
+        boolean clear = directClear && medium.waterMeters == 0 && medium.lavaMeters == 0 && tr.thickness == 0;
         float audibilityThreshold = 0.05f;
         // Audible bila gain cukup DAN dalam jangkauan efektif (range + bias + toleransi).
         double effectiveReach = config.shoutRange() * 1.5 + distanceBias + config.voiceRange();
         boolean audible = gain >= audibilityThreshold && rawDistance <= effectiveReach;
 
         return new SoundPath(gain, lowpass, rev.enclosed ? rev.density : 0f, distanceBias, muffled, audible, clear);
+    }
+
+    // ---------- Smoothing temporal per pasangan ----------
+    private SoundPath smooth(String pairKey, SoundPath target, long now) {
+        double s = clampD(config.smoothingFactor(), 0.05, 1.0);
+        if (s >= 1.0) return target;
+        SmoothState st = smoothStates.get(pairKey);
+        if (st == null || now - st.lastMs > SMOOTH_STALE_MS) {
+            // pasangan baru / basi (teleport, respawn): snap langsung ke target.
+            smoothStates.put(pairKey, new SmoothState(target.gain, boundedLowpass(target.lowpassHz),
+                    target.distanceBias, now));
+            return target;
+        }
+        float f = (float) s;
+        st.gain += (target.gain - st.gain) * f;
+        st.lowpass += (boundedLowpass(target.lowpassHz) - st.lowpass) * f;
+        st.bias += (target.distanceBias - st.bias) * f;
+        st.lastMs = now;
+        // Lowpass mendekati nyquist = dianggap tanpa filter lagi.
+        float lp = st.lowpass >= 23000f ? Float.MAX_VALUE : st.lowpass;
+        boolean muffled = lp < 2400f || (target.muffled && st.gain < 0.9f);
+        return new SoundPath(st.gain, lp, target.reverb, st.bias, muffled, target.audible, target.clear);
+    }
+
+    /** Float.MAX_VALUE tidak bisa di-lerp; wakili "tanpa filter" sebagai 24 kHz. */
+    private static float boundedLowpass(float hz) {
+        return Math.min(hz, 24000f);
+    }
+
+    private void sweepIfNeeded(long now) {
+        if (pathCache.size() > SWEEP_THRESHOLD) {
+            pathCache.entrySet().removeIf(e -> e.getValue().expireAt <= now);
+        }
+        if (smoothStates.size() > SWEEP_THRESHOLD) {
+            smoothStates.entrySet().removeIf(e -> now - e.getValue().lastMs > SMOOTH_STALE_MS * 5);
+        }
+    }
+
+    /** Buang cache + state smoothing milik player (dipanggil saat quit/disconnect). */
+    public void clearFor(UUID player) {
+        String prefix = player + ">";
+        String suffix = ">" + player;
+        pathCache.keySet().removeIf(k -> k.startsWith(prefix) || k.endsWith(suffix));
+        smoothStates.keySet().removeIf(k -> k.startsWith(prefix) || k.endsWith(suffix));
     }
 
     private RayTraceResult safeRayTrace(World world, Location from, Vector dir, double maxDist, FluidCollisionMode fluid) {
@@ -165,8 +294,8 @@ public final class SoundPhysicsEngine {
     private static final class Transmission {
         final int thickness;        // block solid distinct
         final float absorption;     // per-block absorption (material avg)
-        final boolean softMaterial; // wool/leaves/snow ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ lowpass lebih agresif
-        final boolean maxOpaque;    // stone/obsidian ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ opaque penuh
+        final boolean softMaterial; // wool/leaves/snow -> lowpass lebih agresif
+        final boolean maxOpaque;    // stone/obsidian -> opaque penuh
         Transmission(int thickness, float absorption, boolean softMaterial, boolean maxOpaque) {
             this.thickness = thickness;
             this.absorption = absorption;
@@ -204,8 +333,8 @@ public final class SoundPhysicsEngine {
 
     private static final class MatAcoustics {
         final float absorption; // per-block (0 = tembus, tinggi = redam besar)
-        final boolean soft;     // wool/leaves ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ lowpass agresif
-        final boolean opaque;   // stone/obsidian ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ opaque
+        final boolean soft;     // wool/leaves -> lowpass agresif
+        final boolean opaque;   // stone/obsidian -> opaque
         MatAcoustics(float absorption, boolean soft, boolean opaque) {
             this.absorption = absorption;
             this.soft = soft;
@@ -294,31 +423,34 @@ public final class SoundPhysicsEngine {
         return (float) (1.0 / (1.0 + extra * 0.08));
     }
 
-    // ---------- Medium (air) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â per meter, eksponensial ----------
+    // ---------- Medium (air/lava) - per meter, eksponensial ----------
     private static final class MediumResult {
-        final boolean inWater;
-        final double waterMeters; // panjang jalur di air (meter, bukan block)
-        MediumResult(boolean inWater, double waterMeters) {
-            this.inWater = inWater;
+        final double waterMeters; // panjang jalur di air (meter)
+        final double lavaMeters;  // panjang jalur di lava (meter)
+        MediumResult(double waterMeters, double lavaMeters) {
             this.waterMeters = waterMeters;
+            this.lavaMeters = lavaMeters;
         }
     }
 
     private MediumResult probeMedium(Location from, Location to, Vector start, Vector dir, double maxDist, World world) {
-        boolean inWater = isWater(world.getBlockAt(from.getBlockX(), from.getBlockY(), from.getBlockZ()).getType())
-                || isWater(world.getBlockAt(to.getBlockX(), to.getBlockY(), to.getBlockZ()).getType());
         double waterLen = 0;
+        double lavaLen = 0;
+        // Endpoint di dalam medium dihitung minimal 1 meter (kepala terendam).
+        Material fromM = world.getBlockAt(from.getBlockX(), from.getBlockY(), from.getBlockZ()).getType();
+        Material toM = world.getBlockAt(to.getBlockX(), to.getBlockY(), to.getBlockZ()).getType();
+        if (isWater(fromM) || isWater(toM)) waterLen = 1;
+        if (isLava(fromM) || isLava(toM)) lavaLen = 1;
         double step = 1.0;
         for (double t = 0; t < maxDist; t += step) {
             double x = start.getX() + dir.getX() * t;
             double y = start.getY() + dir.getY() * t;
             double z = start.getZ() + dir.getZ() * t;
-            if (isWater(world.getBlockAt(floor(x), floor(y), floor(z)).getType())) {
-                inWater = true;
-                waterLen += step; // akumulasi meter air (= block).
-            }
+            Material m = world.getBlockAt(floor(x), floor(y), floor(z)).getType();
+            if (isWater(m)) waterLen += step;      // akumulasi meter air (= block).
+            else if (isLava(m)) lavaLen += step;
         }
-        return new MediumResult(inWater, waterLen);
+        return new MediumResult(waterLen, lavaLen);
     }
 
     // ---------- Reverb ----------
@@ -335,18 +467,27 @@ public final class SoundPhysicsEngine {
         int r = config.reverbProbeRadius();
         if (r <= 0) return new ReverbResult(false, 0f);
         int lx = at.getBlockX(), ly = at.getBlockY(), lz = at.getBlockZ();
+        // Sparse sampling (step 2): akurasi density hampir sama, biaya ~1/8.
         int solid = 0, total = 0;
-        for (int x = -r; x <= r; x++) {
-            for (int y = -r; y <= r; y++) {
-                for (int z = -r; z <= r; z++) {
+        for (int x = -r; x <= r; x += 2) {
+            for (int y = -r; y <= r; y += 2) {
+                for (int z = -r; z <= r; z += 2) {
                     total++;
                     if (isBlocking(world.getBlockAt(lx + x, ly + y, lz + z).getType())) solid++;
                 }
             }
         }
         float density = total == 0 ? 0f : (float) solid / total;
-        // enclosed bila density cukup & ada blok di "atap" di atas listener (ruang tertutup).
-        boolean ceiling = isBlocking(world.getBlockAt(lx, ly + r, lz).getType());
+        // enclosed bila density cukup & ADA atap di atas listener dalam 2r block
+        // (probe kolom, bukan satu titik - lebih akurat untuk langit-langit tinggi).
+        boolean ceiling = false;
+        int maxUp = Math.max(r * 2, 4);
+        for (int dy = 1; dy <= maxUp; dy++) {
+            if (isBlocking(world.getBlockAt(lx, ly + dy, lz).getType())) {
+                ceiling = true;
+                break;
+            }
+        }
         return new ReverbResult(density > 0.45f && ceiling, density);
     }
 
@@ -366,6 +507,14 @@ public final class SoundPhysicsEngine {
         return m == Material.WATER || m == Material.BUBBLE_COLUMN
                 || m == Material.KELP || m == Material.KELP_PLANT
                 || m == Material.SEAGRASS || m == Material.TALL_SEAGRASS;
+    }
+
+    private static boolean isLava(Material m) {
+        return m == Material.LAVA;
+    }
+
+    private static double clampD(double v, double lo, double hi) {
+        return Math.max(lo, Math.min(hi, v));
     }
 
     private static int floor(double v) {

@@ -1,18 +1,15 @@
 package id.astolfo.voicechat.config;
 
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * AstolfoConfig — pembungkus config.yml (SnakeYAML bawaan Paper).
  * Memuat semua section yang dipakai server sesuai IMPLEMENTATION_PLAN §C.
+ * Auto-create/heal/migrate file ditangani ConfigUpdater SEBELUM load().
  */
 public final class AstolfoConfig {
 
@@ -34,18 +31,9 @@ public final class AstolfoConfig {
         return new AstolfoConfig(yaml);
     }
 
-    public void saveDefaultIfMissing(File file, InputStream defaults) {
-        if (file.exists()) return;
-        try {
-            file.getParentFile().mkdirs();
-            Files.copy(defaults, file.toPath());
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to save default config.yml", e);
-        }
-    }
-
-    private ConfigurationSection sec(String path) {
-        return yaml.getConfigurationSection(path);
+    // ---- meta ----
+    public int configVersion() {
+        return i("config_version", 0);
     }
 
     private String s(String path, String def) {
@@ -173,12 +161,14 @@ public final class AstolfoConfig {
         return b("noise_cancellation.enabled", false);
     }
 
+    /** SPECTRAL (pure-Java, default) | GATE (ringan) | RNNOISE (native, roadmap → fallback SPECTRAL). */
     public String noiseEngine() {
-        return s("noise_cancellation.engine", "RNNOISE");
+        return s("noise_cancellation.engine", "SPECTRAL");
     }
 
-    public boolean noiseFallbackToSpeex() {
-        return b("noise_cancellation.fallback_to_speex", true);
+    /** Agresivitas pengurangan noise 0.0-1.0. */
+    public double noiseStrength() {
+        return d("noise_cancellation.strength", 0.7D);
     }
 
     public boolean noiseSkipSilentFrames() {
@@ -247,6 +237,26 @@ public final class AstolfoConfig {
         return b("sound_physics.bypass_for_groups", true);
     }
 
+    /** Skala gain difraksi 0.0-2.0. 0 = matikan probe difraksi (hemat CPU). */
+    public double diffractionStrength() {
+        return d("sound_physics.diffraction_strength", 1.0D);
+    }
+
+    /** Skala redaman transmisi dinding 0.0-2.0. 0 = dinding tidak meredam. */
+    public double transmissionStrength() {
+        return d("sound_physics.transmission_strength", 1.0D);
+    }
+
+    /** Skala muffle medium air/lava 0.0-2.0. 0 = medium tidak meredam. */
+    public double mediumStrength() {
+        return d("sound_physics.medium_strength", 1.0D);
+    }
+
+    /** Faktor lerp smoothing per pasangan 0.05-1.0. 1.0 = tanpa smoothing. */
+    public double smoothingFactor() {
+        return d("sound_physics.smoothing_factor", 0.35D);
+    }
+
     // ---- audio playback ----
     public boolean audioEnabled() {
         return b("audio.enabled", true);
@@ -276,6 +286,23 @@ public final class AstolfoConfig {
         return b("audio.normalize", true);
     }
 
+    /** Ekstensi file playback yang dikenali (tanpa titik). */
+    public List<String> audioFormats() {
+        List<String> list = yaml.getStringList("audio.formats");
+        if (list == null || list.isEmpty()) {
+            list = new ArrayList<>(List.of("mp3", "ogg", "wav"));
+        }
+        return list;
+    }
+
+    public boolean privateChannelDefaultAudibleNearby() {
+        return b("audio.private_channel.default_audible_nearby", false);
+    }
+
+    public double privateChannelDefaultRange() {
+        return d("audio.private_channel.default_range", -1D);
+    }
+
     // ---- performance ----
     public boolean virtualThreads() {
         return b("performance.virtual_threads", true);
@@ -301,6 +328,15 @@ public final class AstolfoConfig {
         return i("performance.dsp_queue_capacity", 1024);
     }
 
+    // ---- integration ----
+    public boolean placeholderApiEnabled() {
+        return b("integration.placeholderapi.enabled", true);
+    }
+
+    public boolean publicApiEnabled() {
+        return b("integration.public_api", true);
+    }
+
     // ---- compatibility ----
     public int defaultCompatibilityVersion() {
         return i("compatibility.default_compatibility_version", 20);
@@ -321,5 +357,13 @@ public final class AstolfoConfig {
 
     public boolean logPackets() {
         return b("debug.log_packets", false);
+    }
+
+    public boolean logDspTiming() {
+        return b("debug.log_dsp_timing", false);
+    }
+
+    public boolean logRaytrace() {
+        return b("debug.log_raytrace", false);
     }
 }

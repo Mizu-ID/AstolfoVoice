@@ -23,12 +23,19 @@ public final class DspProcessor {
 
     /** Proses satu frame: apply lowpass (bila cutoff < max), reverb (bila amount>0), gate. */
     public void process(short[] pcm, float lowpassHz, float reverbAmount, boolean gateEnabled, float gateThresholdDb) {
+        process(pcm, lowpassHz, reverbAmount, 1.2f, gateEnabled, gateThresholdDb);
+    }
+
+    /** Versi lengkap: reverbDecaySeconds dari config sound_physics.reverb_decay_seconds. */
+    public void process(short[] pcm, float lowpassHz, float reverbAmount, float reverbDecaySeconds,
+                        boolean gateEnabled, float gateThresholdDb) {
         if (lowpassHz > 0 && lowpassHz < AudioUtils.SAMPLE_RATE / 2f) {
             lowpass.setCutoff(lowpassHz);
             lowpass.processInPlace(pcm);
         }
         if (reverbAmount > 0f) {
             reverb.setAmount(reverbAmount);
+            reverb.setDecay(reverbDecaySeconds);
             reverb.processInPlace(pcm);
         }
         if (gateEnabled) {
@@ -188,25 +195,37 @@ public final class DspProcessor {
 
     // ---------- Reverb: feedback delay network (4 tap) ----------
     static final class ReverbNet {
+        private static final double[] DELAY_MS = {29.0, 37.0, 41.0, 43.0};
+
         private double amount = 0.0;
+        private double decaySeconds = -1;
         private final int[] delaySamples;
         private final double[][] buffers;
         private final int[] pos;
-        private static final double[] GAINS = {0.77, 0.73, 0.70, 0.66};
+        private final double[] gains = {0.77, 0.73, 0.70, 0.66};
 
         ReverbNet() {
-            double[] ms = {29.0, 37.0, 41.0, 43.0};
             delaySamples = new int[4];
             buffers = new double[4][];
             pos = new int[4];
             for (int i = 0; i < 4; i++) {
-                delaySamples[i] = (int) (ms[i] / 1000.0 * AudioUtils.SAMPLE_RATE);
+                delaySamples[i] = (int) (DELAY_MS[i] / 1000.0 * AudioUtils.SAMPLE_RATE);
                 buffers[i] = new double[delaySamples[i]];
                 pos[i] = 0;
             }
         }
 
         void setAmount(double a) { this.amount = Math.max(0, Math.min(0.6, a)); }
+
+        /** Map decay RT60 (detik) ke feedback gain per tap: g = 10^(-3*delay/decay). */
+        void setDecay(double seconds) {
+            if (seconds <= 0 || seconds == decaySeconds) return;
+            decaySeconds = seconds;
+            for (int i = 0; i < 4; i++) {
+                double g = Math.pow(10.0, -3.0 * (DELAY_MS[i] / 1000.0) / seconds);
+                gains[i] = Math.max(0.3, Math.min(0.85, g));
+            }
+        }
 
         void processInPlace(short[] pcm) {
             if (amount <= 0) return;
@@ -215,8 +234,8 @@ public final class DspProcessor {
                 double wet = 0;
                 for (int t = 0; t < 4; t++) {
                     double d = buffers[t][pos[t]];
-                    wet += d * GAINS[t];
-                    buffers[t][pos[t]] = in + d * GAINS[t] * 0.5;
+                    wet += d * gains[t];
+                    buffers[t][pos[t]] = in + d * gains[t] * 0.5;
                     pos[t] = (pos[t] + 1) % delaySamples[t];
                 }
                 wet /= 4.0;

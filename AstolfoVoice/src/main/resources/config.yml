@@ -6,7 +6,15 @@
 # jadi client SVC standar tetap bisa connect tanpa ganti mod.
 # Buka port UDP 'network.port' di firewall agar voice chat berfungsi.
 # Dokumen lengkap: docs/IMPLEMENTATION_PLAN.md & docs/PROTOCOL_REFERENCE.md
+#
+# File ini DIJAGA OTOMATIS oleh plugin:
+#  - corrupt  -> di-backup ke config.yml.corrupt-<waktu>, lalu dibuat ulang.
+#  - outdated -> nilai kamu dipertahankan, key baru ditambah, file lama
+#                di-backup ke config.yml.bak-<waktu>.
 # =====================================================================
+
+# Versi struktur config. JANGAN diubah manual - dipakai auto-migrasi.
+config_version: 2
 
 # ---------------------------------------------------------------------
 # Jaringan & protokol (JANGAN diubah kecuali tahu konsekuensinya)
@@ -74,7 +82,7 @@ voice_range:
   # Batas atas override range per-player via API/command.
   max_player_range_override: 1000000
   # Threshold (relative ke whisper_range) untuk set ikon bisik di client.
-  # distance < whisper_range * factor → whispering=true.
+  # distance < whisper_range * factor -> whispering=true.
   whisper_icon_threshold_factor: 1.5
 
 # ---------------------------------------------------------------------
@@ -101,15 +109,19 @@ force_voice_chat: false
 # Noise cancellation (server-side)
 # ---------------------------------------------------------------------
 # PENTING: NC server-side efektif HANYA jika sound_physics.tier = TIER_2,
-# karena butuh decode→proses→re-encode. Pada TIER_1, noise suppression
+# karena butuh decode->proses->re-encode. Pada TIER_1, noise suppression
 # memakai bawaan client SVC (hemat CPU server).
 noise_cancellation:
   # Aktifkan noise suppression pada PCM sebelum re-broadcast (butuh TIER_2).
   enabled: false
-  # Engine. RNNOISE = neural net native (kualitas tinggi). SPEEX = pure Java fallback.
-  engine: RNNOISE
-  # Fallback ke SPEEX otomatis jika native RNNoise gagal load di OS/arch ini.
-  fallback_to_speex: true
+  # Engine:
+  #  SPECTRAL = spectral subtraction adaptif pure-Java (default, tanpa native lib).
+  #             Bagus untuk hum kipas / hiss / noise stasioner.
+  #  GATE     = noise gate ringan (paling murah, hanya potong lantai noise).
+  #  RNNOISE  = neural net native (roadmap; sekarang otomatis fallback SPECTRAL).
+  engine: SPECTRAL
+  # Agresivitas pengurangan noise (0.0 lembut - 1.0 maksimal).
+  strength: 0.7
   # Hanya proses speaker aktif (RMS di atas threshold) untuk hemat CPU.
   skip_silent_frames: true
   silent_threshold_db: -50.0
@@ -121,7 +133,7 @@ sound_physics:
   # Aktifkan simulasi fisika suara berbasis raytrace.
   enabled: true
   # Tier simulasi.
-  # TIER_1 = occlusion gate + modulasi distance (murah, default).
+  # TIER_1 = occlusion + modulasi distance (murah, default).
   # TIER_2 = TIER_1 + PCM DSP bake (low-pass muffle + reverb + NC). Mahal, opt-in.
   tier: TIER_1
   # Lakukan raytrace occlusion (apakah tertutup?).
@@ -129,10 +141,22 @@ sound_physics:
   # Raytrace langsung async (true) atau via main-thread cache tick (false, aman default).
   # true lebih cepat tapi uji stabilitas di Paper-mu dulu.
   async_raytrace: false
-  # Maksimum block solid yang ditembus sebelum suara tidak terdengar sama sekali.
+  # Maksimum block solid yang ditembus sebelum suara tidak tembus dinding
+  # sama sekali (difraksi lewat celah masih dihitung).
   max_occlusion_blocks: 8
   # Penalti jarak per block solid yang ditembus (block). Mensimulasikan "mendam".
   occlusion_penalty_per_block: 6.0
+  # Kekuatan difraksi: suara membungkung di tepi obstacle (0.0-2.0).
+  # 1.0 = natural. 0.0 = matikan probe difraksi (hemat CPU, dinding jadi keras).
+  diffraction_strength: 1.0
+  # Kekuatan redaman transmisi dinding (0.0-2.0). 1.0 = natural.
+  # 0.0 = dinding tidak meredam sama sekali.
+  transmission_strength: 1.0
+  # Kekuatan muffle medium air/lava (0.0-2.0). 1.0 = natural.
+  medium_strength: 1.0
+  # Smoothing hasil physics per pasangan pembicara-pendengar (0.05-1.0).
+  # Kecil = transisi sangat halus saat lewat tepi obstacle; 1.0 = tanpa smoothing.
+  smoothing_factor: 0.35
   # Radius probe untuk deteksi ruang tertutup (reverb/echo).
   reverb_probe_radius: 6
   # Penalti distance saat listener berada di ruang tertutup (Tier 1 simulasi gema).
@@ -140,11 +164,12 @@ sound_physics:
   # Cache hasil raytrace per pasangan selama N tick (50ms tiap tick).
   # Naikkan untuk hemat CPU, turunkan untuk akurasi.
   cache_ticks: 2
-  # Saat TIER_2: cutoff low-pass untuk muffle (Hz). Lebih rendah = lebih mendam.
+  # Saat TIER_2: cutoff low-pass default untuk muffle (Hz) bila physics tidak
+  # memberi cutoff spesifik. Lebih rendah = lebih mendam.
   muffle_lowpass_hz: 1200
-  # Saat TIER_2: gain reverb (0.0-1.0).
+  # Saat TIER_2: gain reverb (0.0-1.0). Menskala density ruangan ke jumlah gema.
   reverb_gain: 0.25
-  # Saat TIER_2: decay reverb (detik).
+  # Saat TIER_2: decay reverb / RT60 (detik). Besar = gema panjang (aula/gua).
   reverb_decay_seconds: 1.2
   # World yang mendapat TIER_2 (kosong = semua world jika tier=TIER_2).
   tier2_worlds: []
@@ -152,14 +177,14 @@ sound_physics:
   bypass_for_groups: true
 
 # ---------------------------------------------------------------------
-# Audio playback (mp3/ogg/wav via command)
+# Audio playback (mp3/ogg/wav via command /av play)
 # ---------------------------------------------------------------------
 audio:
   # Aktifkan fitur playback.
   enabled: true
   # Folder file audio (relatif terhadap folder plugin).
   folder: audio
-  # Format yang didukung.
+  # Ekstensi yang dicoba saat resolve nama file tanpa ekstensi.
   formats: [mp3, ogg, wav]
   # Volume default playback (0.0-1.0).
   default_volume: 1.0
@@ -171,7 +196,7 @@ audio:
   resample_quality: HIGH
   # Normalize peak playback agar tidak clipping.
   normalize: true
-  # Default PlaybackOptions untuk API: audibleNearby + range untuk private channel.
+  # Default PrivateChannelOptions untuk API bila caller tidak memberi options.
   private_channel:
     # Jika false: hanya anggota channel dengar (range tak terbatas antar anggota).
     # Jika true: anggota + orang dalam 'range' block dengar.
@@ -199,15 +224,11 @@ performance:
 # Integrasi
 # ---------------------------------------------------------------------
 integration:
+  # PlaceholderAPI expansion %astolfo_*% (soft-depend, aktif bila PAPI terpasang).
   placeholderapi:
     enabled: true
-  # Bridge untuk plugin Denizen (custom event/property).
-  denizen:
-    enabled: true
-  # Bridge untuk Skript (via PublicApi + addon terpisah).
-  skript:
-    enabled: true
-  # Ekspose API publik ke plugin lain (ServicesManager).
+  # Ekspose API publik ke plugin lain via ServicesManager (AstolfoApi).
+  # Denizen/Skript/plugin lain hook lewat API ini.
   public_api: true
 
 # ---------------------------------------------------------------------
@@ -216,21 +237,10 @@ integration:
 compatibility:
   # Versi protokol utama (SVC saat ini = 20).
   default_compatibility_version: 20
-  # Izinkan adapter versi legacy (true = aktifkan registry per-versi).
+  # Izinkan adapter versi legacy (true = aktifkan registry per-versi; roadmap).
   allow_legacy_adapters: true
   # Tolak client versi tidak dikenal (false = coba fallback ke default).
   reject_unknown_version: false
-
-# ---------------------------------------------------------------------
-# Native library (RNNoise, Opus native opsional)
-# ---------------------------------------------------------------------
-native:
-  # Ekstrak native lib dari jar ke folder temp saat load.
-  extract_from_jar: true
-  # Folder native (relatif folder plugin). Kosong = java.io.tmpdir.
-  folder: natives
-  # Coba load native; jika gagal, log warning + nonaktifkan fitur terkait (jangan crash).
-  graceful_failure: true
 
 # ---------------------------------------------------------------------
 # Debug
@@ -239,7 +249,7 @@ debug:
   enabled: false
   # Log paket (sangat verbose).
   log_packets: false
-  # Log timing DSP per frame.
+  # Log timing DSP Tier 2 per frame (verbose).
   log_dsp_timing: false
-  # Log raytrace occlusion per pasangan (verbose).
+  # Log hasil raytrace/physics per pasangan (sangat verbose).
   log_raytrace: false
