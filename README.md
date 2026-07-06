@@ -7,10 +7,10 @@
 # <span style="color:#ff5ca8">Astolfo</span> <sub style="color:#d8b4e2; font-size:.5em">proximity voice chat, but make it cute ♡</sub>
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-ff5ca8?style=flat-square&logo=gnu)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/Mizu-ID/Astolfo?include_prereleases&style=flat-square&color=ff9ecf&label=release)](https://github.com/Mizu-ID/Astolfo/releases)
+[![Release](https://img.shields.io/github/v/release/Mizu-ID/AstolfoVoice?include_prereleases&style=flat-square&color=ff9ecf&label=release)](https://github.com/Mizu-ID/AstolfoVoice/releases)
 [![Paper](https://img.shields.io/badge/Paper-1.21%2B-00B2FF?style=flat-square&logo=papermc)](https://papermc.io)
 [![Java](https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk)](https://openjdk.org)
-[![Discussions](https://img.shields.io/badge/discuss-pink-ffb6c1?style=flat-square)](https://github.com/Mizu-ID/Astolfo/discussions)
+[![Discussions](https://img.shields.io/badge/discuss-pink-ffb6c1?style=flat-square)](https://github.com/Mizu-ID/AstolfoVoice/discussions)
 
 </td>
 </tr></table>
@@ -123,7 +123,7 @@ Butuh **JDK 25** + **Gradle 9.6.1** (wrapper disertakan). Build pertama online
 2. Start server → `config.yml` + folder `audio/` dibuat otomatis.
 3. Client pakai mod Simple Voice Chat biasa. Buka port UDP `24454`.
 
-**Atau langsung ambil jar** dari release: https://github.com/Mizu-ID/Astolfo/releases
+**Atau langsung ambil jar** dari release: https://github.com/Mizu-ID/AstolfoVoice/releases
 
 </td>
 </tr></table>

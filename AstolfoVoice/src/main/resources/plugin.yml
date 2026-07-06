@@ -4,7 +4,7 @@ main: id.astolfo.voicechat.AstolfoVoice
 api-version: '1.21'
 authors: [Mizu]
 description: Proximity voice chat kompatibel protokol Simple Voice Chat, dengan sound physics raytrace, noise cancellation server-side, range dinamis, dan playback audio mp3/ogg/wav.
-website: https://github.com/Mizu-ID/Astolfo
+website: https://github.com/Mizu-ID/AstolfoVoice
 load: STARTUP
 softdepend:
   - PlaceholderAPI
